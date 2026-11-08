@@ -16,6 +16,7 @@ document-render render report.json -o report.pdf
 document-render render report.json -o report.md     # Markdown，只留结构
 document-render render report.json -o report.html --paged   # 屏幕上按页显示
 document-render check report.json
+document-render parse report.docx -o report.json     # 反过来，从 Word 解析出 JSON，图片在 report.assets/
 document-render render report.json -o report.html --catalog my-components/ --style-sets themes/ --style-set formal
 document-render mcp
 ```
