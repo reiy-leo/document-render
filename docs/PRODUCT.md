@@ -1,24 +1,24 @@
-# fmtagno 产品说明
+# document-render 产品说明
 
-fmtagno 把一份 JSON 文档渲染成 docx、pdf、html，也能出 Markdown。JSON 里不写排版细节，只引用提前注册好的组件，再带一点样式。思路来自 [vercel-labs/json-render](https://github.com/vercel-labs/json-render)。
+document-render 把一份 JSON 文档渲染成 docx、pdf、html，也能出 Markdown。JSON 里不写排版细节，只引用提前注册好的组件，再带一点样式。思路来自 [vercel-labs/json-render](https://github.com/vercel-labs/json-render)。
 
 它是本地命令行工具，单个 Rust 二进制，另带一个 MCP server 给 AI 调用。通过 Homebrew 安装。
 
 ## 给谁用
 
 - 想用一份数据同时出 Word、PDF 和网页的人。
-- 想让 AI 直接产出办公文档的人：AI 只管写 JSON，fmtagno 负责排版。
+- 想让 AI 直接产出办公文档的人：AI 只管写 JSON，document-render 负责排版。
 
 ## 第一版（v0.1）
 
 - 格式：docx、pdf、html，外加 Markdown（GFM，只留结构不留样式，有合并格的表格写成内嵌 HTML，提示框写成 `> [!NOTE]`）。
 - 内置组件：Heading、Text、Code、Math（块级公式）、List、Table、Image、PageBreak、Divider（分割线）、Quote（引用）、Callout（提示框）、TableOfContents（目录）、Slide、Section（分节），外加根组件 Document；行内有 InlineCode 和 InlineMath（行内公式），都写在 runs 里。
 - 命令行：
-  - `fmtagno render doc.json -o out.docx`：按输出文件的扩展名选格式。
-  - `fmtagno check doc.json`：只校验，不出文件。
-  - `fmtagno catalog`：列出能用的组件，加 `--json` 输出 schema。
+  - `document-render render doc.json -o out.docx`：按输出文件的扩展名选格式。
+  - `document-render check doc.json`：只校验，不出文件。
+  - `document-render catalog`：列出能用的组件，加 `--json` 输出 schema。
   - 输入写 `-` 从标准输入读；输出写 `-` 时配 `--format` 写到标准输出。
-  - `fmtagno mcp`：以 MCP server 方式运行（stdio）。
+  - `document-render mcp`：以 MCP server 方式运行（stdio）。
 - MCP 工具：`render`（JSON 进，文件出）、`check`、`list_components`（带每个组件的 props 说明，方便 AI 写对）。
 - 自定义组件：JSON 定义文件，用内置组件拼。
 
@@ -52,7 +52,7 @@ fmtagno 把一份 JSON 文档渲染成 docx、pdf、html，也能出 Markdown。
 }
 ```
 
-- `type`：组件名，必须在组件目录里。`fmtagno catalog --json` 能看到每个组件 props 的 JSON Schema。
+- `type`：组件名，必须在组件目录里。`document-render catalog --json` 能看到每个组件 props 的 JSON Schema。
 - `props`：组件自己的参数，多写、少写、写错类型都会报错。
 - `style`：三种写法都行：样式名 `"muted"`；样式名数组 `["muted", "center"]`，后面的覆盖前面的；样式对象 `{ "fontSize": 11 }`。数组里也能混写对象。
 - `parts`：部位样式，比如表格的 `header`、`evenRow`、`lastRow`，列表的 `level2`、`marker`。
@@ -95,7 +95,7 @@ html 默认是一长条网页，分页和表头重复只在打印时出现。加
 
 - 按 `meta.page` 的纸张和页边距切页，PageBreak 后面的内容从新页开始。
 - 表格跨页时续页顶上会再出现表头（`repeatHeader: false` 时不出现）。
-- 显示页眉页脚，填好页码。排完版后 `<html>` 上会有 `data-fmtagno-ready="1"`，截图或打印的脚本可以等它。
+- 显示页眉页脚，填好页码。排完版后 `<html>` 上会有 `data-document-render-ready="1"`，截图或打印的脚本可以等它。
 - 屏幕上横竖混排没问题，打印时只用第一节的纸张。
 - 文件会大 500 KB 左右，打开时要等脚本排完版。
 

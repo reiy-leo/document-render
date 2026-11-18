@@ -2,14 +2,14 @@
 
 use std::path::PathBuf;
 
-use fmtagno::render::Format;
+use document_render::render::Format;
 
 fn has(bytes: &[u8], needle: &str) -> bool {
     bytes.windows(needle.len()).any(|w| w == needle.as_bytes())
 }
 
 fn dir() -> PathBuf {
-    let dir = std::env::temp_dir().join("fmtagno-cells-test");
+    let dir = std::env::temp_dir().join("document-render-cells-test");
     std::fs::create_dir_all(&dir).unwrap();
     // 几个测试并行跑，都会写这张图：先写到各自的临时文件再改名，免得别的测试读到写了一半的图
     let tmp =
@@ -44,11 +44,11 @@ const DOC: &str = r##"{
 
 #[test]
 fn merged_cells_row_heights_inline_image_html() {
-    let out = fmtagno::render_str(DOC, Format::Html, Some(&dir())).unwrap();
+    let out = document_render::render_str(DOC, Format::Html, Some(&dir())).unwrap();
     let h = String::from_utf8(out.bytes).unwrap();
     assert!(h.contains(r#"rowspan="2""#), "{h}");
     assert!(h.contains(r#"colspan="2""#));
-    assert!(h.contains("fmtagno-inline-img"));
+    assert!(h.contains("document-render-inline-img"));
     assert!(h.contains("data:image/png;base64,"));
     // 合并后第二行只剩两个格
     let row2 = h.split("<tr").nth(2).unwrap();
@@ -57,7 +57,7 @@ fn merged_cells_row_heights_inline_image_html() {
 
 #[test]
 fn merged_cells_row_heights_inline_image_docx() {
-    let out = fmtagno::render_str(DOC, Format::Docx, Some(&dir())).unwrap();
+    let out = document_render::render_str(DOC, Format::Docx, Some(&dir())).unwrap();
     let b = &out.bytes;
     assert!(out.warnings.is_empty(), "{:?}", out.warnings);
     assert!(has(b, r#"<w:gridSpan w:val="2""#));
@@ -71,7 +71,7 @@ fn merged_cells_row_heights_inline_image_docx() {
 
 #[test]
 fn merged_cells_row_heights_inline_image_pdf() {
-    let out = fmtagno::render_str(DOC, Format::Pdf, Some(&dir())).unwrap();
+    let out = document_render::render_str(DOC, Format::Pdf, Some(&dir())).unwrap();
     assert!(out.bytes.starts_with(b"%PDF-"));
     assert!(
         !out.warnings.iter().any(|w| w.contains("图片")),
@@ -83,7 +83,7 @@ fn merged_cells_row_heights_inline_image_pdf() {
 #[test]
 fn rejects_overlapping_spans() {
     let json = DOC.replace(r#""colSpan": 2"#, r#""colSpan": 3"#);
-    let err = fmtagno::render_str(&json, Format::Html, Some(&dir()));
+    let err = document_render::render_str(&json, Format::Html, Some(&dir()));
     // 超出列数：报错或给出警告，不能悄悄画坏
     match err {
         Err(_) => {}
@@ -106,7 +106,7 @@ fn header_inline_image_gets_its_relationship() {
         "h": { "type": "Text", "props": { "text": [{ "image": "logo.png", "width": 40 }, " 页眉"] } }
       }
     }"##;
-    let out = fmtagno::render_str(json, Format::Docx, Some(&dir())).unwrap();
+    let out = document_render::render_str(json, Format::Docx, Some(&dir())).unwrap();
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(out.bytes)).unwrap();
     let names: Vec<String> = zip.file_names().map(String::from).collect();
     let mut found = false;

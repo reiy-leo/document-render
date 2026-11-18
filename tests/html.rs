@@ -1,8 +1,8 @@
-use fmtagno::render::Format;
+use document_render::render::Format;
 
 fn html(json: &str) -> String {
     String::from_utf8(
-        fmtagno::render_str(json, Format::Html, Some(std::path::Path::new("examples")))
+        document_render::render_str(json, Format::Html, Some(std::path::Path::new("examples")))
             .unwrap()
             .bytes,
     )
@@ -45,13 +45,13 @@ fn rich_runs_and_slide() {
       }
     }"##,
     );
-    assert!(s.contains("class=\"fmtagno-slide\""));
+    assert!(s.contains("class=\"document-render-slide\""));
     assert!(s.contains("font-weight:700;\">粗</span>"));
     assert!(s.contains("<a href=\"https://example.com\"><span"));
 }
 
 fn err(json: &str) -> String {
-    match fmtagno::render_str(json, Format::Html, None) {
+    match document_render::render_str(json, Format::Html, None) {
         Ok(_) => panic!("应该报错"),
         Err(e) => format!("{e:#}"),
     }
@@ -84,11 +84,11 @@ fn rejects_bad_documents() {
 #[test]
 fn showcase_example_renders() {
     let s = html(include_str!("../examples/showcase.json"));
-    assert!(s.contains("class=\"fmtagno-list\" id=\"steps\""));
+    assert!(s.contains("class=\"document-render-list\" id=\"steps\""));
     assert!(s.contains(">1.</span>"));
     assert!(s.contains("<code style="));
     assert!(s.contains("<col style=\"width:20.00%\">"));
-    assert!(s.contains("class=\"fmtagno-pagebreak\""));
+    assert!(s.contains("class=\"document-render-pagebreak\""));
     assert!(s.contains("font-size:11pt"));
     assert!(s.contains("src=\"data:image/svg+xml;base64,"));
 }
@@ -96,17 +96,20 @@ fn showcase_example_renders() {
 #[test]
 fn paged_mode_embeds_pagedjs() {
     let json = include_str!("../examples/pages.json");
-    let (d, tree) = fmtagno::prepare(json, &fmtagno::Env::default()).unwrap();
-    let opts = fmtagno::render::Options {
+    let (d, tree) = document_render::prepare(json, &document_render::Env::default()).unwrap();
+    let opts = document_render::render::Options {
         paged: true,
         ..Default::default()
     };
-    let out = fmtagno::render::render(&d, &tree, fmtagno::render::Format::Html, &opts).unwrap();
+    let out =
+        document_render::render::render(&d, &tree, document_render::render::Format::Html, &opts)
+            .unwrap();
     let s = String::from_utf8(out.bytes).unwrap();
     assert!(s.contains("Paged.js v0.4.3"));
     assert!(s.contains(".pagedjs_page"));
     // 默认不带
-    let plain = fmtagno::render_str(json, fmtagno::render::Format::Html, None).unwrap();
+    let plain =
+        document_render::render_str(json, document_render::render::Format::Html, None).unwrap();
     assert!(!String::from_utf8(plain.bytes).unwrap().contains("Paged.js"));
 }
 
@@ -116,7 +119,7 @@ fn auto_columns_shrink_to_content() {
     let json = r##"{"root":"d","elements":{"d":{"type":"Document","children":["t"]},
       "t":{"type":"Table","props":{"rows":[["","基本信息"]],"widths":["5.65pt","auto"],"look":{"firstRow":false,"lastColumn":true}},
            "parts":{"lastColumn":{"paddingLeft":12}}}}}"##;
-    let out = fmtagno::render_str(json, Format::Html, None).unwrap();
+    let out = document_render::render_str(json, Format::Html, None).unwrap();
     let html = String::from_utf8(out.bytes).unwrap();
     assert!(!html.contains("width:100%"), "{html}");
     assert!(html.contains("table-layout:auto"), "{html}");
@@ -144,15 +147,16 @@ fn empty_text_keeps_a_line() {
 #[test]
 fn pattern_borders_use_svg_overlay() {
     let json = include_str!("../examples/borders.json");
-    let out = fmtagno::render_str(json, fmtagno::render::Format::Html, None).unwrap();
+    let out =
+        document_render::render_str(json, document_render::render::Format::Html, None).unwrap();
     let s = String::from_utf8(out.bytes).unwrap();
     // 原生能画的照旧
     assert!(s.contains("3pt double #1A73E8"));
     assert!(s.contains("3pt ridge #1A73E8"));
     // 图案线：透明边 + ::before 贴 SVG
     assert!(s.contains("3pt solid transparent"));
-    assert!(s.contains("data-fmtagno-b=\"0\""));
+    assert!(s.contains("data-document-render-b=\"0\""));
     assert!(s.contains("::before"));
     assert!(s.contains("data:image/svg+xml,"));
-    assert!(!s.contains("/*fmtagno-tiles*/"));
+    assert!(!s.contains("/*document-render-tiles*/"));
 }

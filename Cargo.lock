@@ -508,6 +508,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "document-render"
+version = "0.1.0-alpha.3"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "clap",
+ "docx-rs",
+ "image",
+ "math-core",
+ "roxmltree 0.21.2",
+ "schemars",
+ "serde",
+ "serde_json",
+ "ttf-parser",
+ "typst",
+ "typst-kit",
+ "typst-layout",
+ "typst-pdf",
+ "zip",
+]
+
+[[package]]
 name = "docx-rs"
 version = "0.4.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -668,28 +690,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "98de4bbd547a563b716d8dfa9aad1cb19bfab00f4fa09a6a4ed21dbcf44ce9c4"
 dependencies = [
  "num-traits",
-]
-
-[[package]]
-name = "fmtagno"
-version = "0.1.0-alpha.3"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "clap",
- "docx-rs",
- "image",
- "math-core",
- "roxmltree 0.21.2",
- "schemars",
- "serde",
- "serde_json",
- "ttf-parser",
- "typst",
- "typst-kit",
- "typst-layout",
- "typst-pdf",
- "zip",
 ]
 
 [[package]]

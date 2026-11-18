@@ -1,7 +1,7 @@
-use fmtagno::render::Format;
+use document_render::render::Format;
 
 fn md(json: &str) -> (String, Vec<String>) {
-    let out = fmtagno::render_str(json, Format::Markdown, None).unwrap();
+    let out = document_render::render_str(json, Format::Markdown, None).unwrap();
     (String::from_utf8(out.bytes).unwrap(), out.warnings)
 }
 

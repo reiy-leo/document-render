@@ -1,11 +1,11 @@
 //! 分节、页眉页脚、页码。
 
-use fmtagno::render::Format;
+use document_render::render::Format;
 
 const EXAMPLE: &str = include_str!("../examples/sections.json");
 
 fn render(json: &str, f: Format) -> String {
-    let out = fmtagno::render_str(json, f, None).unwrap();
+    let out = document_render::render_str(json, f, None).unwrap();
     assert!(out.warnings.is_empty(), "{:?}", out.warnings);
     String::from_utf8_lossy(&out.bytes).into_owned()
 }
@@ -15,7 +15,7 @@ fn count(s: &str, needle: &str) -> usize {
 }
 
 fn err(json: &str) -> String {
-    match fmtagno::render_str(json, Format::Html, None) {
+    match document_render::render_str(json, Format::Html, None) {
         Ok(_) => panic!("应该报错"),
         Err(e) => format!("{e:#}"),
     }
@@ -54,7 +54,7 @@ fn docx_without_headers_has_no_references() {
 
 #[test]
 fn pdf_renders_sections() {
-    let out = fmtagno::render_str(EXAMPLE, Format::Pdf, None).unwrap();
+    let out = document_render::render_str(EXAMPLE, Format::Pdf, None).unwrap();
     assert!(out.bytes.starts_with(b"%PDF-"));
     assert!(out.warnings.is_empty(), "{:?}", out.warnings);
 }
@@ -62,24 +62,24 @@ fn pdf_renders_sections() {
 #[test]
 fn html_has_named_pages_and_templates() {
     let x = render(EXAMPLE, Format::Html);
-    assert_eq!(count(&x, "<section class=\"fmtagno-section\""), 3);
-    assert!(x.contains("@page fmtagno-s2 { size: 841.8898pt 595.2756pt;"));
-    assert!(
-        x.contains(".fmtagno-section[data-section=\"2\"] { page: fmtagno-s2; column-count: 2;")
-    );
+    assert_eq!(count(&x, "<section class=\"document-render-section\""), 3);
+    assert!(x.contains("@page document-render-s2 { size: 841.8898pt 595.2756pt;"));
+    assert!(x.contains(
+        ".document-render-section[data-section=\"2\"] { page: document-render-s2; column-count: 2;"
+    ));
     assert!(x.contains(r#"data-kind="header-first""#));
     assert!(x.contains(r#"data-kind="header-even""#));
     assert!(x.contains(r#"data-page-start="1""#));
-    assert!(x.contains(r#"<span class="fmtagno-field" data-field="sectionPages">"#));
+    assert!(x.contains(r#"<span class="document-render-field" data-field="sectionPages">"#));
     // 不加 --paged 时没有脚本，页眉页脚只是 <template>
-    assert!(!x.contains("FmtagnoHeaders"));
+    assert!(!x.contains("DocumentRenderHeaders"));
 }
 
 #[test]
 fn no_section_means_one_implicit_section() {
     let json = r#"{"meta":{"page":{"footer":"f"}},"root":"d","elements":{"d":{"type":"Document","children":["t"]},"t":{"type":"Text","props":{"text":"a"}},"f":{"type":"Text","props":{"text":["第 ",{"field":"page"}," 页"]}}}}"#;
     let x = render(json, Format::Html);
-    assert_eq!(count(&x, "<section class=\"fmtagno-section\""), 1);
+    assert_eq!(count(&x, "<section class=\"document-render-section\""), 1);
     assert!(x.contains(r#"data-kind="footer-default""#));
     let d = render(json, Format::Docx);
     assert_eq!(count(&d, "<w:footerReference"), 1);

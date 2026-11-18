@@ -1,11 +1,11 @@
 use std::io::Read;
 
-use fmtagno::render::Format;
+use document_render::render::Format;
 
 const EXAMPLE: &str = include_str!("../examples/math.json");
 
-fn render(json: &str, f: Format) -> fmtagno::render::Output {
-    fmtagno::render_str(json, f, None).unwrap()
+fn render(json: &str, f: Format) -> document_render::render::Output {
+    document_render::render_str(json, f, None).unwrap()
 }
 
 fn document_xml(bytes: &[u8]) -> String {
@@ -123,15 +123,15 @@ fn bad_latex_falls_back() {
     let out = render(&json, Format::Docx);
     let x = document_xml(&out.bytes);
     assert!(x.contains("\\nosuchcommand{x}"));
-    let (_, tree) = fmtagno::prepare(&json, &Default::default()).unwrap();
-    assert_eq!(fmtagno::check_math(&tree).len(), 2);
+    let (_, tree) = document_render::prepare(&json, &Default::default()).unwrap();
+    assert_eq!(document_render::check_math(&tree).len(), 2);
 }
 
 #[test]
 fn pdf_typst_source() {
-    let d = fmtagno::doc::parse(&doc("x^2", r"\frac{1}{2}")).unwrap();
+    let d = document_render::doc::parse(&doc("x^2", r"\frac{1}{2}")).unwrap();
     let tree = d.tree().unwrap();
-    let (src, _, _) = fmtagno::render::pdf::markup(&d, &tree, &Default::default());
+    let (src, _, _) = document_render::render::pdf::markup(&d, &tree, &Default::default());
     assert!(src.contains(r"$attach(\u{78}, t: \u{32})$"), "{src}");
     assert!(src.contains(r"$display(frac(\u{31}, \u{32}))$"), "{src}");
     assert!(src.contains("New Computer Modern Math"), "{src}");
@@ -140,18 +140,18 @@ fn pdf_typst_source() {
 #[test]
 fn math_props_are_checked() {
     let json = r#"{"root":"d","elements":{"d":{"type":"Document","children":["m"]},"m":{"type":"Math","props":{"tex":"x"}}}}"#;
-    assert!(fmtagno::render_str(json, Format::Html, None).is_err());
+    assert!(document_render::render_str(json, Format::Html, None).is_err());
     let json = r#"{"root":"d","elements":{"d":{"type":"Document","children":["m"]},"m":{"type":"InlineMath","props":{}}}}"#;
-    assert!(fmtagno::render_str(json, Format::Html, None).is_err());
+    assert!(document_render::render_str(json, Format::Html, None).is_err());
 }
 
 #[test]
 fn catalog_lists_math() {
-    let s = fmtagno::components::spec("Math").unwrap();
+    let s = document_render::components::spec("Math").unwrap();
     let schema = serde_json::to_string(&(s.schema)()).unwrap();
     assert!(schema.contains("latex"));
     assert!(schema.contains("number"));
-    let t = fmtagno::components::spec("Text").unwrap();
+    let t = document_render::components::spec("Text").unwrap();
     let schema = serde_json::to_string(&(t.schema)()).unwrap();
     assert!(schema.contains("InlineMath"), "{schema}");
 }

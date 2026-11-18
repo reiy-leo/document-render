@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use fmtagno::render::Format;
+use document_render::render::Format;
 
 fn has(bytes: &[u8], needle: &str) -> bool {
     bytes.windows(needle.len()).any(|w| w == needle.as_bytes())
@@ -8,7 +8,7 @@ fn has(bytes: &[u8], needle: &str) -> bool {
 
 #[test]
 fn showcase_renders_to_docx() {
-    let out = fmtagno::render_str(
+    let out = document_render::render_str(
         include_str!("../examples/showcase.json"),
         Format::Docx,
         Some(Path::new("examples")),
@@ -22,13 +22,13 @@ fn showcase_renders_to_docx() {
 
 #[test]
 fn png_image_is_embedded() {
-    let dir = std::env::temp_dir().join("fmtagno-docx-test");
+    let dir = std::env::temp_dir().join("document-render-docx-test");
     std::fs::create_dir_all(&dir).unwrap();
     image::RgbImage::from_pixel(4, 2, image::Rgb([200, 30, 30]))
         .save(dir.join("dot.png"))
         .unwrap();
     let json = r#"{"root":"d","elements":{"d":{"type":"Document","children":["i"]},"i":{"type":"Image","props":{"src":"dot.png","width":40}}}}"#;
-    let out = fmtagno::render_str(json, Format::Docx, Some(&dir)).unwrap();
+    let out = document_render::render_str(json, Format::Docx, Some(&dir)).unwrap();
     assert!(out.warnings.is_empty(), "{:?}", out.warnings);
     assert!(has(&out.bytes, "word/media/"));
 }
@@ -36,7 +36,7 @@ fn png_image_is_embedded() {
 /// Word 实机里看到的两个问题：合计行的上边框画了两条、二级编号出成「二.1」。
 #[test]
 fn styles_example_borders_and_legal_numbering() {
-    let out = fmtagno::render_str(
+    let out = document_render::render_str(
         include_str!("../examples/styles.json"),
         Format::Docx,
         Some(Path::new("examples")),
@@ -54,7 +54,7 @@ fn styles_example_borders_and_legal_numbering() {
 #[test]
 fn table_header_repeats_and_page_break() {
     let json = include_str!("../examples/pages.json");
-    let out = fmtagno::render_str(json, Format::Docx, None).unwrap();
+    let out = document_render::render_str(json, Format::Docx, None).unwrap();
     assert!(has(&out.bytes, "<w:trPr><w:tblHeader /></w:trPr>"));
     assert!(has(&out.bytes, r#"<w:br w:type="page""#));
     // repeatHeader: false 时不写
@@ -63,7 +63,7 @@ fn table_header_repeats_and_page_break() {
         r#""type": "Table", "style": { "repeatHeader": false },"#,
         1,
     );
-    let out = fmtagno::render_str(&off, Format::Docx, None).unwrap();
+    let out = document_render::render_str(&off, Format::Docx, None).unwrap();
     assert!(!has(&out.bytes, "<w:tblHeader"));
 }
 
@@ -79,7 +79,7 @@ fn line_height_multiple_is_at_least_font_size_times() {
         "b": { "type": "Text", "props": { "text": "固定" }, "style": { "fontSize": 10, "lineHeight": "20pt" } }
       }
     }"#;
-    let out = fmtagno::render_str(json, Format::Docx, None).unwrap();
+    let out = document_render::render_str(json, Format::Docx, None).unwrap();
     let b = &out.bytes;
     assert!(has(b, r#"w:line="300" w:lineRule="atLeast""#));
     assert!(has(b, r#"w:line="400" w:lineRule="exact""#));
@@ -106,7 +106,7 @@ fn auto_columns_and_part_padding() {
         r#""firstColumn": true }"#,
         r#""firstColumn": true, "lastColumn": true }"#,
     );
-    let out = fmtagno::render_str(&json, Format::Docx, None).unwrap();
+    let out = document_render::render_str(&json, Format::Docx, None).unwrap();
     let b = &out.bytes;
     // 1460 = 4 个全角字 × 10pt + 左右 padding 12 + 18 + 3pt 余量
     assert!(has(
@@ -138,7 +138,7 @@ fn em_indent_writes_chars() {
                "style": { "fontSize": 12, "marginLeft": "20pt", "marginRight": 10 } }
       }
     }"##;
-    let out = fmtagno::render_str(json, Format::Docx, None).unwrap();
+    let out = document_render::render_str(json, Format::Docx, None).unwrap();
     let b = &out.bytes;
     assert!(has(
         b,
@@ -155,7 +155,8 @@ fn em_indent_writes_chars() {
 #[test]
 fn word_border_styles_map_through() {
     let json = include_str!("../examples/borders.json");
-    let out = fmtagno::render_str(json, fmtagno::render::Format::Docx, None).unwrap();
+    let out =
+        document_render::render_str(json, document_render::render::Format::Docx, None).unwrap();
     for v in [
         "thinThickThinLargeGap",
         "doubleWave",

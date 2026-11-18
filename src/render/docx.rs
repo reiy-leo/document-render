@@ -270,7 +270,7 @@ const MATH_CLOSE: char = '\u{E001}';
 const MATH_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/math";
 
 fn math_marker(i: usize) -> String {
-    format!("{MATH_OPEN}fmtagno-math-{i}{MATH_CLOSE}")
+    format!("{MATH_OPEN}document-render-math-{i}{MATH_CLOSE}")
 }
 
 /// 把写着公式记号的 run 换成 OMML。公式的字号、颜色从这个 run 的 w:rPr 里取，
@@ -288,7 +288,7 @@ fn inject_math(xml: &[u8], slots: &[MathSlot], warn: &mut Warn) -> Vec<u8> {
             break;
         };
         let idx: Option<usize> = rest[m + open_len..m_end]
-            .strip_prefix("fmtagno-math-")
+            .strip_prefix("document-render-math-")
             .and_then(|x| x.parse().ok());
         let start = [rest[..m].rfind("<w:r>"), rest[..m].rfind("<w:r ")]
             .into_iter()
@@ -1041,7 +1041,7 @@ impl Ctx<'_> {
                 ms.font_size = Some(Len::Pt(fs * pct / 100.0));
             }
             ms.merge(&marker_part);
-            // Word 的编号字号、颜色跟段落标记走，fmtagno 不写段落标记的 rPr，
+            // Word 的编号字号、颜色跟段落标记走，document-render 不写段落标记的 rPr，
             // 没指定时就用列表文字的字号和颜色，不然编号会是 Word 默认的五号黑字
             if ms.color.is_none() {
                 ms.color = s.color.clone();

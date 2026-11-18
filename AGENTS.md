@@ -1,6 +1,6 @@
 # AGENTS.md
 
-fmtagno：一份 JSON，按注册好的组件渲染成 docx、pdf、html（第二版加 xlsx、pptx）。本地 Rust 命令行加 MCP server，通过 Homebrew 发布。产品说明见 [docs/PRODUCT.md](docs/PRODUCT.md)。
+document-render：一份 JSON，按注册好的组件渲染成 docx、pdf、html（第二版加 xlsx、pptx）。本地 Rust 命令行加 MCP server，通过 Homebrew 发布。产品说明见 [docs/PRODUCT.md](docs/PRODUCT.md)。
 
 ## 边界
 
@@ -37,7 +37,7 @@ docs/           产品说明和设计文档
 
 ## 构建环境
 
-Hark 沙箱内存小，编译 typst、image 时会被杀。构建和测试放在 LightVela 服务器（`~/src/fmtagno`）上跑；看 docx 效果用那台的 WordCraft（`~/tools/wordcraft/wordcraft-0.15.0-linux-x86_64/bin/wordcraft-cli convert x.docx x.pdf --update-fields`，会重算页码等域），不用 LibreOffice；PDF 转图片用 poppler 的 `pdftoppm`。调 PDF 排版时设 `FMTAGNO_DEBUG_TYPST=1`，会把生成的 Typst 源码打到标准错误。
+Hark 沙箱内存小，编译 typst、image 时会被杀。构建和测试放在 LightVela 服务器（`~/src/document-render`）上跑；看 docx 效果用那台的 WordCraft（`~/tools/wordcraft/wordcraft-0.15.0-linux-x86_64/bin/wordcraft-cli convert x.docx x.pdf --update-fields`，会重算页码等域），不用 LibreOffice；PDF 转图片用 poppler 的 `pdftoppm`。调 PDF 排版时设 `DOCUMENT_RENDER_DEBUG_TYPST=1`，会把生成的 Typst 源码打到标准错误。
 
 ## 命令
 

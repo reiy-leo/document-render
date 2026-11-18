@@ -36,7 +36,7 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> Output {
         tiles: Vec::new(),
     };
     let lang = doc.meta.lang.as_deref().unwrap_or("zh-CN");
-    let title = doc.meta.title.as_deref().unwrap_or("fmtagno");
+    let title = doc.meta.title.as_deref().unwrap_or("document-render");
     let page = &doc.meta.page;
     let mut ws = Vec::new();
     let (w, h) = page.dims_pt(&mut ws);
@@ -50,14 +50,14 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> Output {
         r.out,
         "<!doctype html>\n<html lang=\"{}\">\n<head>\n<meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-         <meta name=\"generator\" content=\"fmtagno {}\">\n",
+         <meta name=\"generator\" content=\"document-render {}\">\n",
         esc(lang),
         env!("CARGO_PKG_VERSION")
     );
     if let Some(a) = &doc.meta.author {
         let _ = writeln!(r.out, "<meta name=\"author\" content=\"{}\">", esc(a));
     }
-    let cols = "/*fmtagno-sections*/\n";
+    let cols = "/*document-render-sections*/\n";
     let _ = write!(
         r.out,
         "<title>{}</title>\n<style>\n@page {{ size: {w}pt {h}pt; margin: {mt}pt {mr}pt {mb}pt {}pt; }}\n\
@@ -89,7 +89,9 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> Output {
         r.out.push_str("\n</script>\n");
     }
     r.out.push_str("</body>\n</html>\n");
-    r.out = r.out.replacen("/*fmtagno-sections*/\n", &r.sec_css, 1);
+    r.out = r
+        .out
+        .replacen("/*document-render-sections*/\n", &r.sec_css, 1);
     Output {
         bytes: r.out.into_bytes(),
         warnings: r.warn.list,
@@ -100,31 +102,31 @@ const BASE_CSS: &str = "\
 * { box-sizing: border-box; }
 h1, h2, h3, h4, h5, h6, p, pre, ul, ol, figure, table, blockquote { margin: 0; }
 hr { border: none; margin: 0; height: 0; overflow: visible; }
-.fmtagno-toc a { color: inherit; text-decoration: none; }
-.fmtagno-toc-fill { display: none; }
+.document-render-toc a { color: inherit; text-decoration: none; }
+.document-render-toc-fill { display: none; }
 table { border-collapse: collapse; }
 th, td { text-align: inherit; vertical-align: top; font-weight: inherit; }
 figure img { max-width: 100%; height: auto; display: block; }
-.fmtagno-inline-img { display: inline-block; vertical-align: baseline; }
+.document-render-inline-img { display: inline-block; vertical-align: baseline; }
 pre { white-space: pre-wrap; }
 code { font: inherit; }
 math { font-family: \"STIX Two Math\", \"Cambria Math\", \"Latin Modern Math\", \"New Computer Modern Math\", math; }
-.fmtagno-math > math { display: inline math; math-style: normal; }
-.fmtagno-math-numbered { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; }
-.fmtagno-math-left, .fmtagno-math-right { grid-template-columns: 0 1fr auto; }
-.fmtagno-math-left > math { justify-self: start; }
-.fmtagno-math-right > math { justify-self: end; }
-.fmtagno-eqno { justify-self: end; }
-.fmtagno-list { list-style: none; padding: 0; }
-.fmtagno-marker { display: inline-block; white-space: nowrap; }
-.fmtagno-ln { display: inline-block; min-width: 2.5em; color: #999; user-select: none; }
-.fmtagno-pagebreak { break-after: page; }
-.fmtagno-section + .fmtagno-section { break-before: page; }
-.fmtagno-slide { aspect-ratio: 16 / 9; border: 1px solid #ddd; border-radius: 6px; padding: 2rem 3rem; \
+.document-render-math > math { display: inline math; math-style: normal; }
+.document-render-math-numbered { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; }
+.document-render-math-left, .document-render-math-right { grid-template-columns: 0 1fr auto; }
+.document-render-math-left > math { justify-self: start; }
+.document-render-math-right > math { justify-self: end; }
+.document-render-eqno { justify-self: end; }
+.document-render-list { list-style: none; padding: 0; }
+.document-render-marker { display: inline-block; white-space: nowrap; }
+.document-render-ln { display: inline-block; min-width: 2.5em; color: #999; user-select: none; }
+.document-render-pagebreak { break-after: page; }
+.document-render-section + .document-render-section { break-before: page; }
+.document-render-slide { aspect-ratio: 16 / 9; border: 1px solid #ddd; border-radius: 6px; padding: 2rem 3rem; \
 margin: 1.5rem 0; overflow: hidden; break-inside: avoid; break-after: page; position: relative; }
-@media screen { .fmtagno-pagebreak { border-top: 1px dashed #bbb; margin: 2rem 0; } \
-.fmtagno-section + .fmtagno-section { border-top: 1px dashed #bbb; margin-top: 2rem; padding-top: 2rem; } }
-@media print { body { max-width: none; margin: 0; padding: 0; } .fmtagno-slide { border: none; } }
+@media screen { .document-render-pagebreak { border-top: 1px dashed #bbb; margin: 2rem 0; } \
+.document-render-section + .document-render-section { border-top: 1px dashed #bbb; margin-top: 2rem; padding-top: 2rem; } }
+@media print { body { max-width: none; margin: 0; padding: 0; } .document-render-slide { border: none; } }
 ";
 
 /// Paged.js 0.4.3（MIT，许可证见 assets/pagedjs-LICENSE.md），`--paged` 时内嵌进 HTML。
@@ -133,7 +135,7 @@ const PAGED_JS: &str = include_str!("../../assets/paged.polyfill.min.js");
 /// Paged.js 自己不会在续页重复 thead：表格被切开后，给续上的那半张表补一份表头。
 /// repeatHeader: false 时表头不放进 thead，这里自然不会补。
 const PAGED_REPEAT_THEAD: &str = "\
-class FmtagnoRepeatThead extends Paged.Handler {
+class DocumentRenderRepeatThead extends Paged.Handler {
   // 续页上放第一行之前补表头，排版时就把表头的高度算进去，不会挤掉最后一行
   renderNode(clone, node) {
     if (clone.nodeType !== 1 || clone.tagName !== 'TR') return;
@@ -146,7 +148,7 @@ class FmtagnoRepeatThead extends Paged.Handler {
     t.insertBefore(copy, t.querySelector(':scope > tbody') || t.firstChild);
   }
 }
-Paged.registerHandlers(FmtagnoRepeatThead);";
+Paged.registerHandlers(DocumentRenderRepeatThead);";
 
 /// 按页显示时的屏幕样式：灰底、白纸、阴影；正文不再限宽，屏幕上的分页虚线也不要了。
 /// 带 data-pagedjs-ignore，Paged.js 不去改写它；但 Paged.js 会把原样式表重新插到后面，
@@ -156,34 +158,34 @@ const PAGED_CSS: &str = "<style data-pagedjs-ignore>
   body { max-width: none; margin: 0; padding: 0; background: #e8eaed; }
   .pagedjs_pages { display: flex; flex-direction: column; align-items: center; padding: 24px 0; }
   .pagedjs_page { background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.25); margin-bottom: 24px; }
-  .fmtagno-pagebreak { border-top: none !important; margin: 0 !important; }
-  .fmtagno-section + .fmtagno-section { border-top: none !important; margin-top: 0 !important; padding-top: 0 !important; }
+  .document-render-pagebreak { border-top: none !important; margin: 0 !important; }
+  .document-render-section + .document-render-section { border-top: none !important; margin-top: 0 !important; padding-top: 0 !important; }
 }
 .pagedjs_pagebox { position: relative; isolation: isolate; }
 .pagedjs_area { position: relative; }
-.fmtagno-hf-box { position: absolute; }
-.fmtagno-toc a { display: flex; align-items: baseline; }
-.fmtagno-toc-fill { display: block; flex: 1; border-bottom: 1px dotted currentColor; margin: 0 4px; opacity: .6; }
-.fmtagno-toc a::after { content: target-counter(attr(href), page); }
+.document-render-hf-box { position: absolute; }
+.document-render-toc a { display: flex; align-items: baseline; }
+.document-render-toc-fill { display: block; flex: 1; border-bottom: 1px dotted currentColor; margin: 0 4px; opacity: .6; }
+.document-render-toc a::after { content: target-counter(attr(href), page); }
 /* 排版时先放在原地不占位，免得 Paged.js 以为它溢出了页面；排完再挪回坐标上 */
-.fmtagno-abs:not(.fmtagno-placed) { top: 0 !important; left: 0 !important; visibility: hidden; }
+.document-render-abs:not(.document-render-placed) { top: 0 !important; left: 0 !important; visibility: hidden; }
 @media print { body { background: none; } }
 </style>
 <style>
 /* Paged.js 不认空 div 上的 break-after，改成让下一个元素从新页开始；
    空 div 自己的 break-after 去掉，不然有时会和下一个元素的 break-before 叠成两次分页，多出空白页 */
-.fmtagno-pagebreak { break-after: auto; }
-.fmtagno-pagebreak + * { break-before: page; }
+.document-render-pagebreak { break-after: auto; }
+.document-render-pagebreak + * { break-before: page; }
 </style>
 ";
 
 /// 页眉页脚和页码：Paged.js 排完所有页后，按每页属于哪节、是不是本节首页、页码奇偶，
 /// 把对应的 <template> 内容放进页面的边距里，再填好页码域。
 /// 页码按 Word 的规则自己数：每节接着上一节数，写了 data-page-start 就从那个数重新开始。
-const PAGED_HF: &str = r#"class FmtagnoHeaders extends Paged.Handler {
+const PAGED_HF: &str = r#"class DocumentRenderHeaders extends Paged.Handler {
   beforeParsed(content) {
     this.tpls = {};
-    for (const t of content.querySelectorAll('template.fmtagno-hf')) {
+    for (const t of content.querySelectorAll('template.document-render-hf')) {
       this.tpls[t.dataset.section + ':' + t.dataset.kind] = t.content;
       t.remove();
     }
@@ -192,7 +194,7 @@ const PAGED_HF: &str = r#"class FmtagnoHeaders extends Paged.Handler {
     const info = [];
     let cur = null;
     pages.forEach((p, i) => {
-      const s = p.element.querySelector('.fmtagno-section[data-section]');
+      const s = p.element.querySelector('.document-render-section[data-section]');
       const id = s ? s.dataset.section : (cur ? cur.id : '0');
       let first = false;
       if (!cur || id !== cur.id) {
@@ -205,7 +207,7 @@ const PAGED_HF: &str = r#"class FmtagnoHeaders extends Paged.Handler {
       info.push({ p, sec: cur, first, num: cur.num + (i - cur.page) });
     });
     const fill = (root, x) => {
-      for (const f of root.querySelectorAll('.fmtagno-field')) {
+      for (const f of root.querySelectorAll('.document-render-field')) {
         const k = f.dataset.field;
         f.textContent = k === 'page' ? x.num : k === 'pages' ? pages.length : x.sec.count;
       }
@@ -221,7 +223,7 @@ const PAGED_HF: &str = r#"class FmtagnoHeaders extends Paged.Handler {
           const t = this.tpls[x.sec.id + ':' + part + '-' + kind];
           if (!t || !box) continue;
           const div = document.createElement('div');
-          div.className = 'fmtagno-hf-box fmtagno-' + part;
+          div.className = 'document-render-hf-box document-render-' + part;
           div.style.cssText = `${pos}:${d}pt;left:${left}pt;width:${width}pt`;
           div.appendChild(t.cloneNode(true));
           box.appendChild(div);
@@ -233,18 +235,18 @@ const PAGED_HF: &str = r#"class FmtagnoHeaders extends Paged.Handler {
     for (const x of info) {
       const box = x.p.element.querySelector('.pagedjs_pagebox');
       const area = x.p.element.querySelector('.pagedjs_area');
-      for (const f of x.p.element.querySelectorAll('.fmtagno-abs')) {
+      for (const f of x.p.element.querySelectorAll('.document-render-abs')) {
         const to = f.dataset.anchor === 'page' ? box : area;
         if (!to) continue;
-        f.classList.add('fmtagno-placed');
+        f.classList.add('document-render-placed');
         to.appendChild(f);
       }
     }
     // 排完的标记，截图、打印脚本可以等它
-    document.documentElement.dataset.fmtagnoReady = '1';
+    document.documentElement.dataset.documentRenderReady = '1';
   }
 }
-Paged.registerHandlers(FmtagnoHeaders);"#;
+Paged.registerHandlers(DocumentRenderHeaders);"#;
 
 struct Html<'a> {
     out: String,
@@ -256,11 +258,11 @@ struct Html<'a> {
     content_width: f32,
     /// 整棵树，目录要从里面收标题
     root: &'a Node,
-    /// 图案边框的 CSS 规则，下标就是元素上 data-fmtagno-b 的值
+    /// 图案边框的 CSS 规则，下标就是元素上 data-document-render-b 的值
     tiles: Vec<String>,
 }
 
-const TILES_MARK: &str = "/*fmtagno-tiles*/";
+const TILES_MARK: &str = "/*document-render-tiles*/";
 
 impl Html<'_> {
     fn node(&mut self, n: &Node, parent: Option<&Style>) {
@@ -277,7 +279,7 @@ impl Html<'_> {
         match &n.component {
             Component::Document(_) => {
                 let cls = if parent.is_none() {
-                    " class=\"fmtagno-root\""
+                    " class=\"document-render-root\""
                 } else {
                     ""
                 };
@@ -288,7 +290,7 @@ impl Html<'_> {
             Component::Slide(p) => {
                 let _ = writeln!(
                     self.out,
-                    "<section class=\"fmtagno-slide\" id=\"{id}\"{st}>"
+                    "<section class=\"document-render-slide\" id=\"{id}\"{st}>"
                 );
                 if let Some(t) = &p.title {
                     let mut ts = n.style.clone();
@@ -334,7 +336,7 @@ impl Html<'_> {
             Component::Callout(p) => {
                 let _ = write!(
                     self.out,
-                    "<aside class=\"fmtagno-callout\" id=\"{id}\"{st}>"
+                    "<aside class=\"document-render-callout\" id=\"{id}\"{st}>"
                 );
                 self.inline(&p.text, &n.style, &n.id);
                 self.out.push_str("</aside>\n");
@@ -360,22 +362,22 @@ impl Html<'_> {
                     Some(no) => {
                         // 带编号时用网格排：居中是 1fr auto 1fr，靠左靠右另换列宽
                         let side = if st.contains("text-align:left") {
-                            " fmtagno-math-left"
+                            " document-render-math-left"
                         } else if st.contains("text-align:right") {
-                            " fmtagno-math-right"
+                            " document-render-math-right"
                         } else {
                             ""
                         };
                         let _ = writeln!(
                             self.out,
-                            "<div class=\"fmtagno-math fmtagno-math-numbered{side}\" id=\"{id}\"{st}><span></span>{body}<span class=\"fmtagno-eqno\">({})</span></div>",
+                            "<div class=\"document-render-math document-render-math-numbered{side}\" id=\"{id}\"{st}><span></span>{body}<span class=\"document-render-eqno\">({})</span></div>",
                             esc(&no.to_string())
                         );
                     }
                     None => {
                         let _ = writeln!(
                             self.out,
-                            "<div class=\"fmtagno-math\" id=\"{id}\"{st}>{body}</div>"
+                            "<div class=\"document-render-math\" id=\"{id}\"{st}>{body}</div>"
                         );
                     }
                 }
@@ -386,14 +388,14 @@ impl Html<'_> {
             Component::PageBreak(_) => {
                 let _ = writeln!(
                     self.out,
-                    "<div class=\"fmtagno-pagebreak\" id=\"{id}\"></div>"
+                    "<div class=\"document-render-pagebreak\" id=\"{id}\"></div>"
                 );
             }
             Component::Section(p) => self.section(n, p.layout(), parent, &st),
         }
     }
 
-    /// 一节：每节一个具名页面（@page fmtagno-sN），页眉页脚写成 <template>，
+    /// 一节：每节一个具名页面（@page document-render-sN），页眉页脚写成 <template>，
     /// 只在 --paged 时由脚本放进页边距；直接打开或打印时不显示。
     fn section(&mut self, n: &Node, lay: &SectionLayout, parent: Option<&Style>, st: &str) {
         let page = &lay.page;
@@ -408,7 +410,7 @@ impl Html<'_> {
         let i = lay.index;
         let _ = writeln!(
             self.sec_css,
-            "@page fmtagno-s{i} {{ size: {w}pt {h}pt; margin: {mt}pt {mr}pt {mb}pt {}pt; }}",
+            "@page document-render-s{i} {{ size: {w}pt {h}pt; margin: {mt}pt {mr}pt {mb}pt {}pt; }}",
             ml + gutter
         );
         let cols = page
@@ -425,7 +427,7 @@ impl Html<'_> {
             .unwrap_or_default();
         let _ = writeln!(
             self.sec_css,
-            ".fmtagno-section[data-section=\"{i}\"] {{ page: fmtagno-s{i};{cols} }}"
+            ".document-render-section[data-section=\"{i}\"] {{ page: document-render-s{i};{cols} }}"
         );
         let mut attrs = format!(
             " data-section=\"{i}\" data-hf=\"{hd} {fd} {} {}\"",
@@ -443,7 +445,7 @@ impl Html<'_> {
         }
         let _ = writeln!(
             self.out,
-            "<section class=\"fmtagno-section\" id=\"{}\"{attrs}{st}>",
+            "<section class=\"document-render-section\" id=\"{}\"{attrs}{st}>",
             esc(&n.id)
         );
         for (part, set) in [("header", &lay.header), ("footer", &lay.footer)] {
@@ -458,7 +460,7 @@ impl Html<'_> {
                 };
                 let _ = writeln!(
                     self.out,
-                    "<template class=\"fmtagno-hf\" data-section=\"{i}\" data-kind=\"{part}-{kind}\">"
+                    "<template class=\"document-render-hf\" data-section=\"{i}\" data-kind=\"{part}-{kind}\">"
                 );
                 self.node(node, parent);
                 self.out.push_str("</template>\n");
@@ -498,7 +500,7 @@ impl Html<'_> {
     fn toc(&mut self, n: &Node, p: &TableOfContentsProps, st: &str) {
         let _ = writeln!(
             self.out,
-            "<nav class=\"fmtagno-toc\" id=\"{}\"{st}>",
+            "<nav class=\"document-render-toc\" id=\"{}\"{st}>",
             esc(&n.id)
         );
         if let Some(t) = &p.title {
@@ -511,7 +513,7 @@ impl Html<'_> {
             let a = self.attr(&es, Some(&n.style), &n.id, Ctx::Block);
             let _ = writeln!(
                 self.out,
-                "<p{a}><a href=\"#{}\"><span>{}</span><span class=\"fmtagno-toc-fill\"></span></a></p>",
+                "<p{a}><a href=\"#{}\"><span>{}</span><span class=\"document-render-toc-fill\"></span></a></p>",
                 esc(&e.id),
                 esc(&e.text)
             );
@@ -578,8 +580,8 @@ impl Html<'_> {
         }
         let [t, r, b, l] = inset;
         let rule = format!(
-            "[data-fmtagno-b=\"{{N}}\"] {{ position: relative; }}\n\
-             [data-fmtagno-b=\"{{N}}\"]::before {{ content: \"\"; position: absolute; \
+            "[data-document-render-b=\"{{N}}\"] {{ position: relative; }}\n\
+             [data-document-render-b=\"{{N}}\"]::before {{ content: \"\"; position: absolute; \
              inset: -{t}pt -{r}pt -{b}pt -{l}pt; pointer-events: none; background: {}; }}\n",
             layers.join(", ")
         );
@@ -590,7 +592,7 @@ impl Html<'_> {
                 self.tiles.len() - 1
             }
         };
-        format!(" data-fmtagno-b=\"{n}\"")
+        format!(" data-document-render-b=\"{n}\"")
     }
 
     fn code(&mut self, n: &Node, p: &CodeProps, st: &str) {
@@ -607,7 +609,7 @@ impl Html<'_> {
                 }
                 let _ = write!(
                     self.out,
-                    "<span class=\"fmtagno-ln\">{}</span>{}",
+                    "<span class=\"document-render-ln\">{}</span>{}",
                     i + 1,
                     esc(line)
                 );
@@ -623,7 +625,7 @@ impl Html<'_> {
         let lines = common::flatten_list(n, &p.items, p.ordered);
         let _ = writeln!(
             self.out,
-            "<div class=\"fmtagno-list\" id=\"{}\"{st}>",
+            "<div class=\"document-render-list\" id=\"{}\"{st}>",
             esc(&n.id)
         );
         let marker_part = n.part("marker");
@@ -674,7 +676,7 @@ impl Html<'_> {
             );
             let _ = write!(
                 self.out,
-                "<span class=\"fmtagno-marker\" style=\"{}\">",
+                "<span class=\"document-render-marker\" style=\"{}\">",
                 esc(&mcss)
             );
             match &s.list_marker_image {
@@ -933,7 +935,7 @@ impl Html<'_> {
             "<figure id=\"{}\"{} style=\"{}\"><img src=\"{}\" alt=\"{}\" style=\"{}\">",
             esc(&n.id),
             page_abs
-                .map(|a| format!(" class=\"fmtagno-abs\" data-anchor=\"{a}\""))
+                .map(|a| format!(" class=\"document-render-abs\" data-anchor=\"{a}\""))
                 .unwrap_or_default(),
             esc(&css),
             esc(&src),
@@ -1013,7 +1015,7 @@ impl Html<'_> {
             }
             let src = self.image_src(id, src);
             text = format!(
-                "<img class=\"fmtagno-inline-img\" src=\"{}\" alt=\"{}\" style=\"{st}\">",
+                "<img class=\"document-render-inline-img\" src=\"{}\" alt=\"{}\" style=\"{st}\">",
                 esc(&src),
                 esc(&r.text)
             );
@@ -1023,7 +1025,8 @@ impl Html<'_> {
                 Field::Pages => "pages",
                 Field::SectionPages => "sectionPages",
             };
-            text = format!("<span class=\"fmtagno-field\" data-field=\"{k}\">{text}</span>");
+            text =
+                format!("<span class=\"document-render-field\" data-field=\"{k}\">{text}</span>");
         }
         let mut code = r.is_code();
         if r.is_math() {

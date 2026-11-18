@@ -1,10 +1,10 @@
 [package]
-name = "fmtagno"
+name = "document-render"
 version = "0.1.0-alpha.3"
 edition = "2024"
 description = "One JSON document, rendered through a registered component catalog to docx, pdf and html."
 license = "MIT"
-repository = "https://github.com/reiy-leo/fmtagno"
+repository = "https://github.com/reiy-leo/document-render"
 readme = "README.md"
 keywords = ["docx", "pdf", "json", "mcp", "document"]
 categories = ["command-line-utilities", "text-processing"]

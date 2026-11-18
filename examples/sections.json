@@ -289,7 +289,7 @@
     "hdr-doc": {
       "type": "Text",
       "props": {
-        "text": "fmtagno 示例文档"
+        "text": "document-render 示例文档"
       },
       "style": {
         "fontSize": "9pt",
@@ -326,7 +326,7 @@
     "hdr-even": {
       "type": "Text",
       "props": {
-        "text": "fmtagno 示例文档"
+        "text": "document-render 示例文档"
       },
       "style": {
         "fontSize": "9pt",

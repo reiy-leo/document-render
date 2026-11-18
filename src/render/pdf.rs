@@ -60,10 +60,10 @@ const DESCENT: f32 = 0.29;
 pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> anyhow::Result<Output> {
     let m = markup_with(doc, tree, opts, false);
     let (mut source, mut warnings) = (m.out, m.warn.list);
-    if std::env::var_os("FMTAGNO_DEBUG_TYPST").is_some() {
+    if std::env::var_os("DOCUMENT_RENDER_DEBUG_TYPST").is_some() {
         eprintln!("{source}");
     }
-    let mut world = FmtagnoWorld::new(source.clone(), m.files);
+    let mut world = DocumentRenderWorld::new(source.clone(), m.files);
     let mut warned = typst::compile::<PagedDocument>(&world);
     // 公式转出来的 Typst 源码万一排不了，整份文档的公式都改成显示 LaTeX 原文再排一次，不让整个 PDF 失败
     if warned.output.is_err() && m.had_math {
@@ -78,7 +78,7 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> anyhow::Result<Output> 
             "pdf：公式排版失败（{}），所有公式改成显示 LaTeX 原文",
             msgs.join("；")
         ));
-        world = FmtagnoWorld::new(source.clone(), again.files);
+        world = DocumentRenderWorld::new(source.clone(), again.files);
         warned = typst::compile::<PagedDocument>(&world);
     }
     let fallbacks = fallback_fonts(&source);
@@ -137,19 +137,19 @@ pub type Files = Vec<(String, Vec<u8>)>;
 
 /// 生成 Typst 源码。返回源码、图片文件、警告。
 /// 页码函数，见 preamble。
-const FIELDS_FN: &str = r#"#let fmtagno-info() = {
+const FIELDS_FN: &str = r#"#let document-render-info() = {
   let p = here().page()
   let num = 1
   let prev = none
   let next = none
-  for m in query(<fmtagno-sec>) {
+  for m in query(<document-render-sec>) {
     let sp = m.location().page()
     if sp > p { next = sp; break }
     if m.value != none { num = m.value } else if prev != none { num = num + sp - prev }
     prev = sp
   }
   if prev == none { prev = 1 }
-  let end = locate(<fmtagno-end>).page()
+  let end = locate(<document-render-end>).page()
   (
     page: num + p - prev,
     first: prev == p,
@@ -180,7 +180,7 @@ fn markup_with<'a>(doc: &Doc, tree: &Node, opts: &'a Options, math_fallback: boo
     m.preamble(doc);
     let base = Style::default();
     m.node(tree, &base);
-    m.out.push_str("#metadata(none) <fmtagno-end>\n");
+    m.out.push_str("#metadata(none) <document-render-end>\n");
     m
 }
 
@@ -207,8 +207,8 @@ struct Markup<'a> {
 impl Markup<'_> {
     fn preamble(&mut self, doc: &Doc) {
         let o = &mut self.out;
-        // 页码这类域都靠它算：每节开头放一个 <fmtagno-sec> 标记（值是重新开始的页码或 none），
-        // 文末放 <fmtagno-end>。页码自己数，不用 counter(page)，这样首页判断、重排页码和
+        // 页码这类域都靠它算：每节开头放一个 <document-render-sec> 标记（值是重新开始的页码或 none），
+        // 文末放 <document-render-end>。页码自己数，不用 counter(page)，这样首页判断、重排页码和
         // Word 的规则一致。
         o.push_str(FIELDS_FN);
         let mut docset = Vec::new();
@@ -393,7 +393,7 @@ impl Markup<'_> {
         let start = lay
             .page_number_start
             .map_or("none".to_string(), |x| x.to_string());
-        let _ = writeln!(o, "#metadata({start}) <fmtagno-sec>");
+        let _ = writeln!(o, "#metadata({start}) <document-render-sec>");
         o.push_str(TOP_ANCHOR);
         self.out.push_str(&o);
         let body = self.children_src(n);
@@ -429,7 +429,7 @@ impl Markup<'_> {
             format!("block(width: 100%, height: 100%, inset: {inset}, align({align}, [\n{body}]))")
         };
         let default = one(self, set.default.as_ref());
-        let mut src = String::from("context { let i = fmtagno-info(); ");
+        let mut src = String::from("context { let i = document-render-info(); ");
         if lay.title_page {
             let f = one(self, set.for_first());
             let _ = write!(src, "if i.first {{ {f} }} else ");
@@ -743,7 +743,7 @@ impl Markup<'_> {
                 Field::Pages => "total",
                 Field::SectionPages => "section-pages",
             };
-            let _ = write!(piece, "#context str(fmtagno-info().{key})");
+            let _ = write!(piece, "#context str(document-render-info().{key})");
         }
         if r.is_math() {
             piece = self.math_src(&r.text, false);
@@ -1600,7 +1600,7 @@ fn library() -> &'static LazyHash<Library> {
     LIB.get_or_init(|| LazyHash::new(Library::default()))
 }
 
-struct FmtagnoWorld {
+struct DocumentRenderWorld {
     main: Source,
     files: HashMap<FileId, Bytes>,
 }
@@ -1610,7 +1610,7 @@ fn file_id(path: &str) -> FileId {
     RootedPath::new(VirtualRoot::Project, vpath).intern()
 }
 
-impl FmtagnoWorld {
+impl DocumentRenderWorld {
     fn new(source: String, files: Files) -> Self {
         let main = Source::new(file_id("/main.typ"), source);
         let files = files
@@ -1621,7 +1621,7 @@ impl FmtagnoWorld {
     }
 }
 
-impl World for FmtagnoWorld {
+impl World for DocumentRenderWorld {
     fn library(&self) -> &LazyHash<Library> {
         library()
     }

@@ -1,10 +1,10 @@
 use std::path::Path;
 
-use fmtagno::render::Format;
+use document_render::render::Format;
 
 #[test]
 fn showcase_renders_to_pdf() {
-    let out = fmtagno::render_str(
+    let out = document_render::render_str(
         include_str!("../examples/showcase.json"),
         Format::Pdf,
         Some(Path::new("examples")),
@@ -22,24 +22,24 @@ fn showcase_renders_to_pdf() {
 #[test]
 fn quotes_and_markup_chars_survive() {
     let json = r##"{"root":"d","elements":{"d":{"type":"Document","children":["t"]},"t":{"type":"Text","props":{"text":"a \"b\" \\ #c *d* _e_ $f$ <g> @h [i]"}}}}"##;
-    let out = fmtagno::render_str(json, Format::Pdf, None).unwrap();
+    let out = document_render::render_str(json, Format::Pdf, None).unwrap();
     assert!(out.bytes.starts_with(b"%PDF-"));
 }
 
 #[test]
 fn styled_blocks_span_full_width() {
-    let d = fmtagno::doc::parse(r##"{"root":"d","elements":{"d":{"type":"Document","children":["s"]},"s":{"type":"Text","props":{"text":"x"},"style":{"align":"right","color":"#666"}}}}"##).unwrap();
+    let d = document_render::doc::parse(r##"{"root":"d","elements":{"d":{"type":"Document","children":["s"]},"s":{"type":"Text","props":{"text":"x"},"style":{"align":"right","color":"#666"}}}}"##).unwrap();
     let tree = d.tree().unwrap();
-    let (src, _, _) = fmtagno::render::pdf::markup(&d, &tree, &Default::default());
+    let (src, _, _) = document_render::render::pdf::markup(&d, &tree, &Default::default());
     assert!(src.contains("width: 100%"), "{src}");
     assert!(src.contains("#set align(right)"), "{src}");
 }
 
 #[test]
 fn table_column_widths_mix_ratio_fixed_auto() {
-    let d = fmtagno::doc::parse(r##"{"root":"d","elements":{"d":{"type":"Document","children":["t"]},"t":{"type":"Table","props":{"rows":[["a","b","c"]],"widths":["20mm","auto",2]}}}}"##).unwrap();
+    let d = document_render::doc::parse(r##"{"root":"d","elements":{"d":{"type":"Document","children":["t"]},"t":{"type":"Table","props":{"rows":[["a","b","c"]],"widths":["20mm","auto",2]}}}}"##).unwrap();
     let tree = d.tree().unwrap();
-    let (src, _, _) = fmtagno::render::pdf::markup(&d, &tree, &Default::default());
+    let (src, _, _) = document_render::render::pdf::markup(&d, &tree, &Default::default());
     assert!(src.contains("columns: (56.69"), "{src}");
     // auto 列按内容量出宽度，写成固定 pt
     let cols = src
@@ -56,7 +56,8 @@ fn table_column_widths_mix_ratio_fixed_auto() {
 #[test]
 fn all_border_styles_render() {
     let json = include_str!("../examples/borders.json");
-    let out = fmtagno::render_str(json, fmtagno::render::Format::Pdf, None).unwrap();
+    let out =
+        document_render::render_str(json, document_render::render::Format::Pdf, None).unwrap();
     assert!(out.bytes.starts_with(b"%PDF"));
 }
 
@@ -68,9 +69,9 @@ fn multi_line_borders_draw_solid_lines() {
             r##"{{"root":"d","elements":{{"d":{{"type":"Document","children":["a"]}},
               "a":{{"type":"Text","props":{{"text":"x"}},"style":{{"border":"{border}","padding":6}}}}}}}}"##
         );
-        let d = fmtagno::doc::parse(&json).unwrap();
+        let d = document_render::doc::parse(&json).unwrap();
         let tree = d.tree().unwrap();
-        fmtagno::render::pdf::markup(&d, &tree, &Default::default()).0
+        document_render::render::pdf::markup(&d, &tree, &Default::default()).0
     };
     // thinThickSmallGap 是 1:1:3：细线 0.6pt，空 0.6pt，粗线 1.8pt；两层 stroke
     let src = one("3pt thinThickSmallGap #1A73E8");
@@ -82,8 +83,8 @@ fn multi_line_borders_draw_solid_lines() {
     assert!(src.contains("fill: tiling("), "{src}");
 
     let json = include_str!("../examples/borders.json");
-    let d = fmtagno::doc::parse(json).unwrap();
+    let d = document_render::doc::parse(json).unwrap();
     let tree = d.tree().unwrap();
-    let (src, _, _) = fmtagno::render::pdf::markup(&d, &tree, &Default::default());
+    let (src, _, _) = document_render::render::pdf::markup(&d, &tree, &Default::default());
     assert!(src.contains("paint: gradient.linear("), "表格双线该用渐变");
 }
