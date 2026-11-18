@@ -509,7 +509,8 @@ fn white_table_header_stays_white() {
     let h = String::from_utf8(h.bytes).unwrap();
     assert!(!h.to_uppercase().contains("F3F3F3"), "html 不该有灰底");
     assert!(h.to_uppercase().contains("DDEEFF"));
-    let (d, tree) = document_render::prepare(WHITE_HEADER, &document_render::Env::default()).unwrap();
+    let (d, tree) =
+        document_render::prepare(WHITE_HEADER, &document_render::Env::default()).unwrap();
     let (src, _, _) = document_render::render::pdf::markup(&d, &tree, &Default::default());
     assert!(!src.to_uppercase().contains("F3F3F3"), "pdf 不该有灰底");
     assert!(src.to_uppercase().contains("DDEEFF"));

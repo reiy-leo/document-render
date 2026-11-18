@@ -219,8 +219,12 @@ fn html_marks_page_format_and_column_break() {
     assert!(x.contains(r#"<div class="document-render-colbreak" id="a-cb"></div>"#));
     assert!(x.contains(".document-render-colbreak + * { break-before: column; }"));
     let paged = document_render::render::render(
-        &document_render::prepare(FRONT, &document_render::Env::default()).unwrap().0,
-        &document_render::prepare(FRONT, &document_render::Env::default()).unwrap().1,
+        &document_render::prepare(FRONT, &document_render::Env::default())
+            .unwrap()
+            .0,
+        &document_render::prepare(FRONT, &document_render::Env::default())
+            .unwrap()
+            .1,
         Format::Html,
         &document_render::render::Options {
             paged: true,

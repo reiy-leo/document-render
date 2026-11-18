@@ -1220,7 +1220,8 @@ impl Ctx {
         {
             self.warns.once(
                 "tabs",
-                "段落里的制表位没保留（document-render 还没有 tabStops），制表符照原样留在文字里".into(),
+                "段落里的制表位没保留（document-render 还没有 tabStops），制表符照原样留在文字里"
+                    .into(),
             );
         }
         match level {
