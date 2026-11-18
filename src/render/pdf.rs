@@ -46,9 +46,9 @@ const FONTS: &[&str] = &[
     "Liberation Sans",
     "PingFang SC",
     "Hiragino Sans GB",
+    "Microsoft YaHei",
     "Noto Sans CJK SC",
     "Source Han Sans SC",
-    "Microsoft YaHei",
     "Libertinus Serif",
 ];
 const MONO_FONTS: &[&str] = &["Menlo", "Consolas", "DejaVu Sans Mono"];
@@ -317,8 +317,19 @@ impl Markup<'_> {
             }
             Component::Heading(p) => {
                 let body = self.inline(&p.text, s);
+                // typst 的 heading 自带 1.4em / 1.2em 字号和粗体，而且盖过用户的 show-set，
+                // 只能在 show 函数里按样式把字号、粗细再设一遍（不放进标题内容，目录里的条目才不受影响）
+                let weight = if s.bold == Some(true) {
+                    "bold"
+                } else {
+                    "regular"
+                };
                 self.block(
-                    format!("#heading(level: {})[{body}]", p.level),
+                    format!(
+                        "#show heading: it => text(size: {}pt, weight: \"{weight}\", it.body)\n#heading(level: {})[{body}]",
+                        s.size_pt(),
+                        p.level
+                    ),
                     s,
                     parent,
                     &n.id,
@@ -994,8 +1005,8 @@ impl Markup<'_> {
         let mut body = Vec::new();
         g.warn_ragged(&mut self.warn, &n.id);
         let mut exact_rows = Vec::new();
-        // Word 把横线的粗细算进行高：每行加它上面那条线，最后一行再加下面那条。
-        // Typst 的线压在格子边上、不占高度，所以加进格子的上下内边距
+        // Word 把横线的粗细算进行高：每行加它上面那条线（行间的线要扣掉下一行的上边距，见下面），
+        // 最后一行再加下面那条。Typst 的线压在格子边上、不占高度，所以加进格子的上下内边距
         let width =
             |b: &Option<Border>| b.as_ref().filter(|b| !b.is_none()).map_or(0.0, |b| b.width);
         let mut above = vec![0.0f32; g.rows + 1];
@@ -1066,8 +1077,12 @@ impl Markup<'_> {
                     .collect();
                 args.push(format!("stroke: ({})", st.join(", ")));
                 let last = r + sl.row_span >= g.rows;
+                // docx 里两行之间的线写在上面一格的下边，Word 让它先占下面一格的上边距：
+                // 只有线比上边距粗的部分才加进行高（第一行的上框线、最后一行的下框线照加）
+                let top_pad = part.padding_side(Edge::Top).unwrap_or(pad);
                 let line = |e: &Edge| match e {
-                    Edge::Top => above[r],
+                    Edge::Top if r == 0 => above[0],
+                    Edge::Top => (above[r] - top_pad).max(0.0),
                     Edge::Bottom if last => above[g.rows],
                     _ => 0.0,
                 };

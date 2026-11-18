@@ -1554,9 +1554,15 @@ impl Ctx<'_> {
             self.page_break();
         }
         self.blocks.push(Block::T(t));
-        // Word 两个表格紧挨着会合并，后面放一个空段落，用 spaceAfter 当间距
+        // Word 两个表格紧挨着会合并，后面放一个空段落，用 spaceAfter 当间距。
+        // 空段落本身占 1pt（固定行高），从段后扣掉，表格后的间距才和 pdf、html 一样
+        let after = match s.space_after {
+            Some(Len::Line(x)) => Some(Len::Line(x)),
+            Some(l) => Some(Len::Pt((l.pt(s.size_pt(), 0.0) - 1.0).max(0.0))),
+            None => None,
+        };
         let gap = PStyle {
-            space_after: s.space_after,
+            space_after: after,
             line_height: Some(LineHeight::Exact(Len::Pt(1.0))),
             ..PStyle::default()
         };

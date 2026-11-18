@@ -25,13 +25,14 @@ use crate::style::{LineHeight, Style};
 
 /// 默认西文字体（样式里没写字体时），和 pdf 的默认字体列表前半截一样。
 pub const DEFAULT_LATIN: &[&str] = &["Helvetica Neue", "Arial", "Liberation Sans"];
-/// 默认中文字体。
+/// 默认中文字体。docx 里写的是 PingFang SC；Windows 上没有它，Word 换成微软雅黑（2026-11-18 实测），
+/// 所以雅黑排在思源、Noto 前面，pdf 在装了雅黑的机器上跟 Windows Word 一样。
 pub const DEFAULT_EAST_ASIA: &[&str] = &[
     "PingFang SC",
     "Hiragino Sans GB",
+    "Microsoft YaHei",
     "Noto Sans CJK SC",
     "Source Han Sans SC",
-    "Microsoft YaHei",
 ];
 /// 一个字体都找不到时的 ascent、descent（em）。
 const FALLBACK: FontMetrics = FontMetrics {

@@ -117,11 +117,11 @@ pdf 和 html 的行高照 Windows 版 Word 排 docx 的规则算（2026-11-18 �
 各格式的做法：
 
 - docx：数字写 `w:lineRule="atLeast"`，固定值写 exact，最小值写 atLeast，multiple 写 auto（line = 倍数 × 240），Word 自己算。fontTable 里给用到的字体写上 charset（简中字体 86、日文 80、韩文 81、繁中 88），Windows Word 只有 charset 和字体对得上时才乘 1.3，写成 00 就不乘。
-- pdf：用本机找到的字体按上面的规则算出基线上下各多少，写进 Typst 的 top-edge、bottom-edge。表格每行加上它上面那条横线的粗细，最后一行再加下面那条，跟 Word 一样。
+- pdf：用本机找到的字体按上面的规则算出基线上下各多少，写进 Typst 的 top-edge、bottom-edge。表格横线的粗细也算进行高，跟 Word 一样：第一行加上框线，最后一行加下框线；行和行之间的线在 docx 里写在上面一格的下边，Word 先拿它去占下一行的上边距，线比上边距粗的部分才加进行高（边距 5pt、线 3pt 时不加）。
 - html：同样算出行高，写成 `line-height`（字号的倍数，固定值写长度）。CSS 只能定行高，基线在行里的位置还是浏览器自己分；浏览器用的字体和生成时找到的不一样时，行高会有出入。
 - markdown：不管行距。
 - 字体都找不到时按 0.88 + 0.29 = 1.17 倍字号算。
-- 字体按「列表里第一个本机找得到的」算，和 pdf 实际用的一样；docx 只写列表里第一个。本机没有、Word 那台有的字体（比如 Linux 上没有 PingFang SC），pdf 和 Word 会对不上。
+- 字体按「列表里第一个本机找得到的」算，和 pdf 实际用的一样；docx 只写列表里第一个。本机没有、Word 那台有的字体（比如 Linux 上没有 PingFang SC），pdf 和 Word 会对不上。默认中文字体 PingFang SC 在 Windows 上没有，Word 换成微软雅黑，所以默认字体列表里雅黑排在 Noto、思源前面。
 - document-render 写的 docx 不带文档网格（`w:docGrid`），所以不做网格对齐。parse 读到带网格的 Word 文档时给警告。
 
 ## 四、边框（对应 w:pBdr、w:tblBorders、w:tcBorders、a:ln、xlsx border）

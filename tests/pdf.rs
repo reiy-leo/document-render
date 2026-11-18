@@ -88,3 +88,49 @@ fn multi_line_borders_draw_solid_lines() {
     let (src, _, _) = document_render::render::pdf::markup(&d, &tree, &Default::default());
     assert!(src.contains("paint: gradient.linear("), "表格双线该用渐变");
 }
+
+/// 行间的横线写在上面一格的下边，Word 先拿它占下一行的上边距（2026-11-18 Windows Word 实测：
+/// 线 3pt、边距 5pt 时行距只多 10pt）。第一行的上框线、最后一行的下框线照加。
+#[test]
+fn table_inner_lines_eat_top_padding() {
+    let src = |pad: f32| {
+        let json = format!(
+            r##"{{"root":"d","elements":{{"d":{{"type":"Document","children":["t"]}},
+              "t":{{"type":"Table","props":{{"rows":[["a"],["b"],["c"]]}},"style":{{"border":"3pt solid #000","cellPadding":{pad}}}}}}}}}"##
+        );
+        let d = document_render::doc::parse(&json).unwrap();
+        let tree = d.tree().unwrap();
+        document_render::render::pdf::markup(&d, &tree, &Default::default()).0
+    };
+    let s = src(5.0);
+    assert!(
+        s.contains("inset: (top: 8pt, right: 5pt, bottom: 5pt"),
+        "第一行加上框线：{s}"
+    );
+    assert!(
+        s.contains("inset: (top: 5pt, right: 5pt, bottom: 5pt"),
+        "中间一行不加：{s}"
+    );
+    assert!(
+        s.contains("inset: (top: 5pt, right: 5pt, bottom: 8pt"),
+        "最后一行加下框线：{s}"
+    );
+    // 边距 1pt 比线细：多出的 2pt 加进去
+    let s = src(1.0);
+    assert!(
+        s.contains("inset: (top: 3pt, right: 1pt, bottom: 1pt"),
+        "{s}"
+    );
+}
+
+/// typst 的 heading 自带 1.2em 字号，要还原成样式里的字号。
+#[test]
+fn heading_keeps_style_font_size() {
+    let d = document_render::doc::parse(r##"{"root":"d","elements":{"d":{"type":"Document","children":["h"]},"h":{"type":"Heading","props":{"level":2,"text":"x"}}}}"##).unwrap();
+    let tree = d.tree().unwrap();
+    let (src, _, _) = document_render::render::pdf::markup(&d, &tree, &Default::default());
+    assert!(
+        src.contains("#show heading: it => text(size: 16pt, weight: \"bold\", it.body)"),
+        "{src}"
+    );
+}

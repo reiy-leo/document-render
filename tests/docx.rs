@@ -236,3 +236,20 @@ fn unzip(bytes: &[u8], name: &str) -> String {
     f.read_to_string(&mut s).unwrap();
     s
 }
+
+/// 表格后面的空段落固定 1pt 高，段后扣掉这 1pt，表格后的间距才是 spaceAfter（和 pdf 一样）。
+#[test]
+fn table_gap_paragraph_counts_its_own_height() {
+    let json = r#"{
+      "root": "doc",
+      "elements": {
+        "doc": { "type": "Document", "children": ["t"] },
+        "t": { "type": "Table", "props": { "rows": [["a"]] }, "style": { "spaceAfter": 8 } }
+      }
+    }"#;
+    let out = document_render::render_str(json, Format::Docx, None).unwrap();
+    assert!(has(
+        &out.bytes,
+        r#"w:after="140" w:line="20" w:lineRule="exact""#
+    ));
+}

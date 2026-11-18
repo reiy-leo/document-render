@@ -1087,7 +1087,8 @@ impl Ctx {
             && para.ppr.line_rule.as_deref() == Some("exact")
             && para.ppr.line.is_some_and(|l| l <= 40.0)
         {
-            let after = para.ppr.after.unwrap_or(0.0) / 20.0;
+            // 段落自己的 1pt 也算进间距（渲染器写 docx 时从段后扣掉了它）
+            let after = (para.ppr.after.unwrap_or(0.0) + para.ppr.line.unwrap_or(0.0)) / 20.0;
             if let Some(Value::Object(el)) = self.elements.get_mut(&t) {
                 let st = el
                     .entry("style")
