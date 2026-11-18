@@ -411,7 +411,7 @@ pub fn resolve_auto(ws: &[ColWidth], natural: &[f32], avail: f32) -> Vec<ColWidt
         .map(|(w, a)| match w {
             ColWidth::Auto if *a < share => ColWidth::Fixed(*a),
             ColWidth::Auto => ColWidth::Ratio(1.0),
-            w => w.clone(),
+            w => *w,
         })
         .collect()
 }
