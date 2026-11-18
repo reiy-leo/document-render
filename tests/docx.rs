@@ -169,9 +169,10 @@ fn word_border_styles_map_through() {
 }
 
 /// `{ "multiple": x }` 是 Word 的多倍行距：docx 原样写 line = x × 240、lineRule auto；
-/// html、pdf 按字体的单倍行高换算。数字 lineHeight 还是 CSS 的意思。
+/// html、pdf 按 Windows Word 的规则（metrics）换算。数字 lineHeight 还是写成 atLeast。
 #[test]
 fn line_height_font_multiple_is_word_auto() {
+    use document_render::render::metrics;
     let json = r#"{
       "version": "0.1",
       "root": "doc",
@@ -185,38 +186,53 @@ fn line_height_font_multiple_is_word_auto() {
     let b = &out.bytes;
     assert!(has(b, r#"w:line="360" w:lineRule="auto""#));
     assert!(has(b, r#"w:line="300" w:lineRule="atLeast""#));
-    // html：1.5 × 字体单倍行高（字号的倍数）
-    let k = 1.5 * document_render::render::pdf::word_line_em(&Default::default());
-    assert!(k > 1.5, "单倍行高应该比字号大：{k}");
+    // html：行盒高度 ÷ 字号
+    let s = document_render::style::Style {
+        font_size: Some(document_render::style::Len::Pt(10.0)),
+        ..Default::default()
+    };
+    let m = metrics::style_line(&s, true, None);
+    let k = |l| metrics::line_box(&m, Some(l), 10.0).height(10.0) / 10.0;
+    let multi = k(document_render::style::LineHeight::FontMultiple(1.5));
+    let css = k(document_render::style::LineHeight::Multiple(1.5));
+    assert!(multi > 1.5, "单倍行高应该比字号大：{multi}");
+    assert!(css >= 1.5 - 1e-6);
     let h = document_render::render_str(json, Format::Html, None).unwrap();
     let h = String::from_utf8(h.bytes).unwrap();
-    let want = format!("line-height:{};", (k * 1000.0).round() / 1000.0);
-    assert!(h.contains(&want), "{want}");
-    assert!(h.contains("line-height:1.5;"));
+    for want in [multi, css] {
+        let want = format!("line-height:{};", (want * 1000.0).round() / 1000.0);
+        assert!(h.contains(&want), "{want}");
+    }
     // 写错了要报错
     let bad = json.replace(r#"{ "multiple": 1.5 }"#, r#"{ "multiple": 0 }"#);
     assert!(document_render::render_str(&bad, Format::Docx, None).is_err());
 }
 
-/// Word 单倍行高的算法：usWinAscent + usWinDescent，再加上 hhea 行距超出的部分。
+/// fontTable 给用到的字体写 charset：认得出的简中字体写 86，Word 才会乘 1.3。
 #[test]
-fn word_single_line_uses_win_metrics() {
-    let mut checked = 0;
-    for (font, _) in typst_kit::fonts::embedded() {
-        let Ok(face) = ttf_parser::Face::parse(font.data(), font.index()) else {
-            continue;
-        };
-        let (Some(os2), hhea) = (face.tables().os2, face.tables().hhea) else {
-            continue;
-        };
-        let u = face.units_per_em() as f32;
-        let win = os2.windows_ascender() as f32 + os2.windows_descender() as f32;
-        let mac = hhea.ascender as f32 - hhea.descender as f32 + hhea.line_gap as f32;
-        let want = (win + (mac - win).max(0.0)) / u;
-        let got = document_render::render::pdf::font_line_em(&face).unwrap();
-        assert!((got - want).abs() < 1e-6);
-        assert!(got >= win / u);
-        checked += 1;
+fn font_table_charset_for_cjk_fonts() {
+    let json = r#"{
+      "version": "0.1",
+      "root": "doc",
+      "elements": {
+        "doc": { "type": "Document", "children": ["a"], "style": { "fontFamily": { "latin": "Calibri", "eastAsia": "Microsoft YaHei" } } },
+        "a": { "type": "Text", "props": { "text": "中文 abc" }, "style": { "fontFamily": { "eastAsia": "SimSun" } } }
+      }
+    }"#;
+    let out = document_render::render_str(json, Format::Docx, None).unwrap();
+    let ft = unzip(&out.bytes, "word/fontTable.xml");
+    for name in ["Microsoft YaHei", "SimSun"] {
+        let want = format!(r#"<w:font w:name="{name}"><w:charset w:val="86" />"#);
+        assert!(ft.contains(&want), "{name}：{ft}");
     }
-    assert!(checked > 0);
+    assert!(ft.contains(r#"<w:font w:name="Symbol"><w:charset w:val="02" />"#));
+}
+
+fn unzip(bytes: &[u8], name: &str) -> String {
+    use std::io::Read;
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut f = z.by_name(name).unwrap();
+    let mut s = String::new();
+    f.read_to_string(&mut s).unwrap();
+    s
 }

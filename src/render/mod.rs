@@ -4,6 +4,7 @@ pub(crate) mod common;
 pub mod docx;
 pub mod html;
 pub mod markdown;
+pub mod metrics;
 pub mod pdf;
 
 use std::path::{Path, PathBuf};

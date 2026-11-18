@@ -11,7 +11,7 @@ use typst::{
     diag::{FileError, FileResult},
     foundations::{Bytes, Datetime, Duration},
     syntax::{FileId, RootedPath, Source, VirtualPath, VirtualRoot},
-    text::{Font, FontBook, FontInfo, FontVariant, FontWeight},
+    text::{Font, FontBook, FontInfo, FontWeight},
     utils::LazyHash,
 };
 use typst_kit::fonts::{self, FontStore};
@@ -27,6 +27,7 @@ use crate::{
     render::{
         Options, Output,
         common::{self, Grid, Warn},
+        metrics,
     },
     style::{
         Align, AnchorTo, Background, Border, BorderStyle, Caps, ColWidth, Color, Edge, HAlign, Len,
@@ -53,9 +54,6 @@ const FONTS: &[&str] = &[
 const MONO_FONTS: &[&str] = &["Menlo", "Consolas", "DejaVu Sans Mono"];
 /// 公式字体，typst 自带。
 const MATH_FONT: &str = "New Computer Modern Math";
-/// 找不到字体度量时，行盒基线以上、以下的部分，按常见中文字体估的。
-const ASCENT: f32 = 0.88;
-const DESCENT: f32 = 0.29;
 
 pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> anyhow::Result<Output> {
     let m = markup_with(doc, tree, opts, false);
@@ -183,6 +181,7 @@ fn markup_with<'a>(doc: &Doc, tree: &Node, opts: &'a Options, math_fallback: boo
         cur_id: String::new(),
         math_fallback,
         had_math: false,
+        marker_font: None,
     };
     m.preamble(doc);
     let base = Style::default();
@@ -209,6 +208,9 @@ struct Markup<'a> {
     math_fallback: bool,
     /// 文档里有没有公式
     had_math: bool,
+    /// 正在排的列表项的编号字体（listMarkerFont）和编号字号相对段落字号的比例，
+    /// Word 量行高时把编号也算进去
+    marker_font: Option<(String, f32)>,
 }
 
 impl Markup<'_> {
@@ -504,15 +506,18 @@ impl Markup<'_> {
                 s.$f.is_some() && parent.$f != s.$f
             };
         }
-        if (changed!(line_height) || changed!(font_size))
-            && let Some(l) = s.line_height
-        {
-            // 像 CSS 那样把多出来的行距对半分到每行上下（half-leading），
-            // 单行的段落、列表项也就有了行高，和 HTML、Word 的间距对得上。
-            // 行间距交给行盒，leading 归零。
-            // 基线上下各占多少按字体自己的 ascender/descender 分（Word 也是），
-            // 不然像 MiSans 这种下沉较深的字体，字在行盒里会偏上
-            let _ = writeln!(sets, "#set text({})", line_edges(s, l, fs));
+        if s.line_height.is_some() || changed!(font_family) || changed!(font_size) {
+            // 行盒按 Windows Word 的规则算（字体度量、混排、行距规则都在 metrics 里），
+            // 行间距交给行盒，leading 归零。行盒跟字体和这段有没有中文有关，
+            // 所以每个块都写一次，不只在 lineHeight 变了的时候
+            let marker = self.marker_font.clone();
+            let marker = marker.as_ref().map(|(f, k)| (f.as_str(), *k));
+            let cjk = metrics::has_cjk(&body);
+            let _ = writeln!(
+                sets,
+                "#set text({})",
+                line_edges(s, s.line_height, fs, cjk, marker)
+            );
             par.push("leading: 0pt".into());
         }
         if changed!(align) {
@@ -953,7 +958,12 @@ impl Markup<'_> {
             ls.background = None;
             ls.border = None;
             ls.padding = None;
+            self.marker_font = s
+                .list_marker_font
+                .clone()
+                .map(|f| (f, s.list_marker_size.map_or(1.0, |p| p / 100.0)));
             body.push_str(&self.block_src(line, &ls, &n.style, &n.id));
+            self.marker_font = None;
         }
         self.block(body, &n.style, parent, &n.id);
     }
@@ -984,6 +994,23 @@ impl Markup<'_> {
         let mut body = Vec::new();
         g.warn_ragged(&mut self.warn, &n.id);
         let mut exact_rows = Vec::new();
+        // Word 把横线的粗细算进行高：每行加它上面那条线，最后一行再加下面那条。
+        // Typst 的线压在格子边上、不占高度，所以加进格子的上下内边距
+        let width =
+            |b: &Option<Border>| b.as_ref().filter(|b| !b.is_none()).map_or(0.0, |b| b.width);
+        let mut above = vec![0.0f32; g.rows + 1];
+        for r in 0..g.rows {
+            for c in 0..g.cols {
+                if !g.is_origin(r, c) {
+                    continue;
+                }
+                let sl = g.slot(r, c);
+                let e = common::span_edges(n, &p.look, &g, r, c);
+                above[r] = above[r].max(width(&e[0]));
+                let r1 = r + sl.row_span;
+                above[r1] = above[r1].max(width(&e[2]));
+            }
+        }
         for r in 0..g.rows {
             let rh = g.row_height(p, r);
             exact_rows.push(match rh {
@@ -1004,10 +1031,13 @@ impl Markup<'_> {
                     sets = format!("#set text({sets})\n");
                 }
                 // 格子自己的行高（比如表头的 lineHeight）
-                if let Some(l) = cs.line_height
-                    && (s.line_height != cs.line_height || s.font_size != cs.font_size)
                 {
-                    let _ = writeln!(sets, "#set text({})", line_edges(&cs, l, cs.size_pt()));
+                    let cjk = metrics::has_cjk(&text);
+                    let _ = writeln!(
+                        sets,
+                        "#set text({})",
+                        line_edges(&cs, cs.line_height, cs.size_pt(), cjk, None)
+                    );
                 }
                 if let Some(a) = cs.align.filter(|a| s.align != Some(*a)) {
                     let a = match a {
@@ -1035,10 +1065,18 @@ impl Markup<'_> {
                     .map(|((k, b), e)| format!("{k}: {}", cell_stroke(b.as_ref(), e)))
                     .collect();
                 args.push(format!("stroke: ({})", st.join(", ")));
+                let last = r + sl.row_span >= g.rows;
+                let line = |e: &Edge| match e {
+                    Edge::Top => above[r],
+                    Edge::Bottom if last => above[g.rows],
+                    _ => 0.0,
+                };
                 let pads: Vec<String> = Edge::ALL
                     .iter()
                     .zip(["top", "right", "bottom", "left"])
-                    .map(|(e, k)| format!("{k}: {}pt", part.padding_side(*e).unwrap_or(pad)))
+                    .map(|(e, k)| {
+                        format!("{k}: {}pt", part.padding_side(*e).unwrap_or(pad) + line(e))
+                    })
                     .collect();
                 args.push(format!("inset: ({})", pads.join(", ")));
                 if let Some(v) = part.vertical_align {
@@ -1053,7 +1091,7 @@ impl Markup<'_> {
                 }
                 let ins: Vec<f32> = Edge::ALL
                     .iter()
-                    .map(|e| part.padding_side(*e).unwrap_or(pad))
+                    .map(|e| part.padding_side(*e).unwrap_or(pad) + line(e))
                     .collect();
                 // 最小行高：Typst 的行只有固定高度，最小高度靠把内容撑到那么高（只看单行的格子）
                 if let Some(h) = rh.filter(|h| !h.exact && sl.row_span == 1) {
@@ -1525,43 +1563,8 @@ fn font_list(s: &Style, mono: bool) -> String {
     lits(&refs)
 }
 
-/// 样式里第一个找得到的字体的 ascender、descender（em，descender 取正）。
-/// 都找不到就用按常见中文字体估的值。
-fn edge_metrics(s: &Style) -> (f32, f32) {
-    let store = font_store();
-    let mut fams: Vec<String> = Vec::new();
-    if let Some(f) = &s.font_family {
-        for x in f.fallback() {
-            fams.extend(
-                x.split(',')
-                    .map(|y| y.trim().to_string())
-                    .filter(|y| !y.is_empty()),
-            );
-        }
-    }
-    fams.extend(FONTS.iter().map(|x| x.to_string()));
-    for fam in fams {
-        let Some(i) = store
-            .book()
-            .select(&fam.to_lowercase(), FontVariant::default())
-        else {
-            continue;
-        };
-        if let Some(font) = store.font(i)
-            && let Ok(face) = ttf_parser::Face::parse(font.data(), font.index())
-        {
-            let u = face.units_per_em() as f32;
-            let (a, d) = (face.ascender() as f32 / u, -(face.descender() as f32) / u);
-            if a > 0.0 && d >= 0.0 {
-                return (a, d);
-            }
-        }
-    }
-    (ASCENT, DESCENT)
-}
-
 /// 字体只扫一次：typst 自带字体加系统字体。
-fn font_store() -> &'static FontStore {
+pub(crate) fn font_store() -> &'static FontStore {
     static STORE: OnceLock<FontStore> = OnceLock::new();
     STORE.get_or_init(|| {
         let mut s = FontStore::new();
@@ -1686,83 +1689,15 @@ impl World for DocumentRenderWorld {
     }
 }
 
-/// 行高落到 Typst 的 top-edge/bottom-edge 上。
-fn line_edges(s: &Style, l: LineHeight, fs: f32) -> String {
-    let (asc, desc) = edge_metrics(s);
-    // Word 的多倍行距先按字体度量换成字号的倍数，再像倍数行高那样分到上下
-    let l = match l {
-        LineHeight::FontMultiple(x) => LineHeight::Multiple(x * word_line_em(s)),
-        l => l,
-    };
-    match l {
-        LineHeight::Multiple(x) => {
-            let half = ((x - asc - desc) / 2.0).max(0.0);
-            format!(
-                "top-edge: {:.3}em, bottom-edge: -{:.3}em",
-                asc + half,
-                desc + half
-            )
-        }
-        // 固定行高就是这么高，字体盒比它高也照样压进去（Word 一样）。
-        // 写成「行高一半 ± (asc-desc)/2 em」，格子里单独改了字号也还是这个行高
-        LineHeight::Exact(x) => {
-            let (h, c) = (x.pt(fs, 0.0) / 2.0, (asc - desc) / 2.0);
-            format!("top-edge: {h:.2}pt + {c:.3}em, bottom-edge: -{h:.2}pt + {c:.3}em")
-        }
-        LineHeight::AtLeast(x) => {
-            let half = ((x.pt(fs, 0.0) - (asc + desc) * fs) / 2.0).max(0.0);
-            format!("top-edge: {asc:.3}em + {half:.2}pt, bottom-edge: -{desc:.3}em - {half:.2}pt")
-        }
-        LineHeight::FontMultiple(_) => unreachable!(),
-    }
-}
-
-/// 一种字体在 Word 里的单倍行高，字号的倍数。Word（Windows）按 GDI 的 TEXTMETRIC 算：
-/// tmHeight + tmExternalLeading，也就是
-/// usWinAscent + usWinDescent + max(0, (hhea.ascender − hhea.descender + hhea.lineGap) − (usWinAscent + usWinDescent))，
-/// 再除以 unitsPerEm（见 OpenType 规范 recom「Baseline to Baseline Distances」）。没有 OS/2 表时用 hhea。
-pub fn font_line_em(face: &ttf_parser::Face) -> Option<f32> {
-    let u = face.units_per_em() as f32;
-    if u <= 0.0 {
-        return None;
-    }
-    let hhea = face.tables().hhea;
-    let mac = hhea.ascender as f32 - hhea.descender as f32 + hhea.line_gap as f32;
-    let h = match face.tables().os2 {
-        Some(os2) => {
-            let win = os2.windows_ascender() as f32 + os2.windows_descender() as f32;
-            win + (mac - win).max(0.0)
-        }
-        None => mac,
-    };
-    (h > 0.0).then_some(h / u)
-}
-
-/// 样式用的字体在 Word 里的单倍行高（字号的倍数）。西文、中文字体都写了时取大的那个，
-/// 跟 Word 一样按一行里最高的字体算；一个都找不到就用默认字体列表里第一个找得到的。
-pub fn word_line_em(s: &Style) -> f32 {
-    let store = font_store();
-    let first = |list: &str| -> Option<f32> {
-        list.split(',')
-            .map(str::trim)
-            .filter(|y| !y.is_empty())
-            .find_map(|fam| {
-                let i = store
-                    .book()
-                    .select(&fam.to_lowercase(), FontVariant::default())?;
-                let font = store.font(i)?;
-                let face = ttf_parser::Face::parse(font.data(), font.index()).ok()?;
-                font_line_em(&face)
-            })
-    };
-    let mut best: Option<f32> = None;
-    if let Some(f) = &s.font_family {
-        for g in f.fallback() {
-            if let Some(k) = first(g) {
-                best = Some(best.map_or(k, |b: f32| b.max(k)));
-            }
-        }
-    }
-    best.or_else(|| first(&FONTS.join(",")))
-        .unwrap_or(ASCENT + DESCENT)
+/// 行高落到 Typst 的 top-edge/bottom-edge 上，按 Windows Word 的规则（见 metrics）。
+/// `cjk` 是这一段里有没有中日韩文字，`marker` 是编号单独用的字体和它相对段落字号的比例。
+fn line_edges(
+    s: &Style,
+    l: Option<LineHeight>,
+    fs: f32,
+    cjk: bool,
+    marker: Option<(&str, f32)>,
+) -> String {
+    let m = metrics::style_line(s, cjk, marker);
+    metrics::line_box(&m, l, fs).typst()
 }

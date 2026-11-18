@@ -14,6 +14,7 @@ use crate::{
     render::{
         Options, Output,
         common::{self, Grid, Warn},
+        metrics,
     },
     style::{
         Align, AnchorTo, Background, Border, BorderStyle, Caps, ColWidth, Edge, EmphasisMark, Len,
@@ -34,6 +35,8 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> Output {
         content_width: 0.0,
         root: tree,
         tiles: Vec::new(),
+        cjk: false,
+        marker_font: None,
     };
     let lang = doc.meta.lang.as_deref().unwrap_or("zh-CN");
     let title = doc.meta.title.as_deref().unwrap_or("document-render");
@@ -291,6 +294,10 @@ struct Html<'a> {
     root: &'a Node,
     /// 图案边框的 CSS 规则，下标就是元素上 data-document-render-b 的值
     tiles: Vec<String>,
+    /// 正在写的元素里有没有中日韩文字；行高要不要算上东亚字体看它
+    cjk: bool,
+    /// 正在写的列表项的编号字体和编号字号比例，行高也算上它
+    marker_font: Option<(String, f32)>,
 }
 
 const TILES_MARK: &str = "/*document-render-tiles*/";
@@ -298,6 +305,7 @@ const TILES_MARK: &str = "/*document-render-tiles*/";
 impl Html<'_> {
     fn node(&mut self, n: &Node, parent: Option<&Style>) {
         let id = esc(&n.id);
+        self.cjk = metrics::has_cjk(&format!("{:?}", n.component));
         let st = self.attr(&n.style, parent, &n.id, Ctx::Block);
         let lang = n
             .style
@@ -687,7 +695,13 @@ impl Html<'_> {
             item.border = None;
             item.padding = None;
             item.merge(&item_part);
+            self.cjk = metrics::has_cjk(&format!("{:?}{}", l.item.text(), l.marker));
+            self.marker_font = s
+                .list_marker_font
+                .clone()
+                .map(|f| (f, s.list_marker_size.map_or(1.0, |p| p / 100.0)));
             let mut css = self.css(&item, Some(&n.style), &n.id, Ctx::ListItem);
+            self.marker_font = None;
             let _ = write!(css, "padding-left:{indent}pt;text-indent:-{hanging}pt;");
             let _ = write!(self.out, "<div style=\"{}\">", esc(&css));
             // 编号
@@ -848,6 +862,12 @@ impl Html<'_> {
                 // 先写表格的 cellPadding，部位上写的 padding 跟在后面盖掉对应的边
                 let mut css = format!("padding:{pad}pt;");
                 css.push_str(&self.css(&part, Some(s), &n.id, Ctx::Cell));
+                // 行高按整格的样式（字体是继承来的）算
+                if let Some(lh) =
+                    line_height_css(&cs, metrics::has_cjk(&format!("{:?}", sl.text())), None)
+                {
+                    css.push_str(&lh);
+                }
                 let borders = common::span_edges(n, &p.look, &g, r, c);
                 for (e, b) in ["top", "right", "bottom", "left"]
                     .iter()
@@ -1266,21 +1286,16 @@ impl Html<'_> {
         if let Some(v) = s.space_after {
             let _ = write!(o, "margin-bottom:{};", len_css_line(v, fs));
         }
-        if changed!(line_height)
-            && let Some(l) = s.line_height
+        // 行高按 Windows Word 的规则算（见 metrics），跟字体和有没有中文有关，
+        // 所以块、列表项每个都写；文字 run 只在 lineHeight 变了时写。格子在 table 里另算
+        let block = matches!(ctx, Ctx::Block | Ctx::ListItem | Ctx::Table);
+        if (changed!(line_height) && !matches!(ctx, Ctx::Cell))
+            || (block && (s.line_height.is_some() || changed!(font_family)))
         {
-            match l {
-                LineHeight::Multiple(x) => {
-                    let _ = write!(o, "line-height:{x};");
-                }
-                // Word 的多倍行距：按字体度量换成 CSS 倍数（字号的几倍）
-                LineHeight::FontMultiple(x) => {
-                    let k = x * super::pdf::word_line_em(s);
-                    let _ = write!(o, "line-height:{};", (k * 1000.0).round() / 1000.0);
-                }
-                LineHeight::Exact(x) | LineHeight::AtLeast(x) => {
-                    let _ = write!(o, "line-height:{};", len_css(x));
-                }
+            let marker = self.marker_font.clone();
+            let marker = marker.as_ref().map(|(f, k)| (f.as_str(), *k));
+            if let Some(lh) = line_height_css(s, self.cjk, marker) {
+                o.push_str(&lh);
             }
         }
         if let Some(v) = s.margin_left {
@@ -1397,6 +1412,21 @@ enum Ctx {
     ListItem,
     Table,
     Cell,
+}
+
+/// `line-height:…;`：固定值照写长度，其他写成字号的倍数（行盒高度 ÷ 字号）。
+/// CSS 只能定行高，基线在行里的位置还是浏览器按它用的字体分。
+fn line_height_css(s: &Style, cjk: bool, marker: Option<(&str, f32)>) -> Option<String> {
+    if let Some(LineHeight::Exact(x)) = s.line_height {
+        return Some(format!("line-height:{};", len_css(x)));
+    }
+    let fs = s.size_pt();
+    if fs <= 0.0 {
+        return None;
+    }
+    let m = metrics::style_line(s, cjk, marker);
+    let k = metrics::line_box(&m, s.line_height, fs).height(fs) / fs;
+    Some(format!("line-height:{};", (k * 1000.0).round() / 1000.0))
 }
 
 fn len_css(l: Len) -> String {

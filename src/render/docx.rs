@@ -261,6 +261,12 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> anyhow::Result<Output> 
         &xml.footers,
         &mut xml.footer_rels,
     );
+    xml.font_table = font_table(
+        [&xml.styles, &xml.document, &xml.numberings]
+            .into_iter()
+            .chain(xml.headers.iter())
+            .chain(xml.footers.iter()),
+    );
     let mut buf = std::io::Cursor::new(Vec::new());
     xml.pack(&mut buf)?;
     Ok(Output {
@@ -745,6 +751,54 @@ fn fix_doc_pr(
 }
 
 type Alts = BTreeMap<u64, std::collections::VecDeque<String>>;
+
+/// 重写 fontTable.xml：文档里 w:rFonts 用到的每个字体都写一条，charset 按字体的代码页位定
+/// （简中字体 86、日文 80、韩文 81、繁中 88、其他 00，见 metrics::font_charset）。
+/// Windows Word 只在 charset 和字体对得上时把它当东亚字体、行高乘 1.3；写成 00 不乘，写错了会换成宋体。
+/// 本机找不到、名字也认不出的字体不写，交给 Word 自己找（和以前一样）。
+/// docx-rs 原来那三条（Times New Roman、Symbol、Arial）保留。
+fn font_table<'a>(parts: impl Iterator<Item = &'a Vec<u8>>) -> Vec<u8> {
+    let mut names: Vec<String> = vec!["Times New Roman".into(), "Symbol".into(), "Arial".into()];
+    for part in parts {
+        let x = String::from_utf8_lossy(part);
+        for piece in x.split("<w:rFonts").skip(1) {
+            let el = &piece[..piece.find('>').unwrap_or(piece.len())];
+            for k in ["w:ascii", "w:hAnsi", "w:eastAsia", "w:cs"] {
+                if let Some(v) = attr(el, k) {
+                    let v = v
+                        .replace("&quot;", "\"")
+                        .replace("&lt;", "<")
+                        .replace("&gt;", ">")
+                        .replace("&amp;", "&");
+                    if !v.trim().is_empty() && !names.iter().any(|n| n.eq_ignore_ascii_case(&v)) {
+                        names.push(v);
+                    }
+                }
+            }
+        }
+    }
+    let mut o = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">"#,
+    );
+    for n in &names {
+        let (charset, family) = match n.as_str() {
+            "Times New Roman" => ("00", "roman"),
+            "Symbol" => ("02", "roman"),
+            "Arial" => ("00", "swiss"),
+            _ => match super::metrics::font_charset(n) {
+                Some(c) => (c, "auto"),
+                None => continue,
+            },
+        };
+        let _ = write!(
+            o,
+            r#"<w:font w:name="{}"><w:charset w:val="{charset}" /><w:family w:val="{family}" /><w:pitch w:val="variable" /></w:font>"#,
+            xml_attr(n)
+        );
+    }
+    o.push_str("</w:fonts>");
+    o.into_bytes()
+}
 
 /// XML 属性值转义，换行也转成字符引用（不然读回来会变成空格）。
 fn xml_attr(s: &str) -> String {
@@ -1711,8 +1765,11 @@ impl Ctx<'_> {
             None => {}
         }
         match s.line_height {
-            // 倍数按 CSS 理解：字号 × 倍数。Word 的 auto 是乘字体自己的单倍行高
-            // （雅黑约 1.32 倍字号），会比 HTML、PDF 高出三四成，所以换成「至少」。
+            // 数字倍数按 CSS 理解：字号 × 倍数，写成「至少 字号 × 倍数」。
+            // 不写 auto：Word 的 auto 乘的是字体自己的单倍行高（雅黑是 1.715 倍字号，宋体 1.297），
+            // 同一个数在不同字体下差很多；atLeast 跟字体无关，字比它高时 Word 自己撑开。
+            // pdf、html 也按 atLeast 的规则排（metrics::line_box），三种格式行高一样。
+            // 要 Word 的多倍行距就写 { multiple }。
             Some(LineHeight::Multiple(x)) => {
                 ls = ls
                     .line(units::twip(fs * x))

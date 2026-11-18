@@ -71,7 +71,7 @@ document-render 的样式以 OOXML 为准：先把 Word、PowerPoint、Excel 能
 | `align` | `left` `center` `right` `justify` `distribute` | w:jc（start、center、end、both、distribute） | algn（l、ctr、r、just、dist） | horizontal | text-align | align / justify |
 | `spaceBefore` | 长度或 `"Nline"` | w:spacing before / beforeLines | a:spcBef | — | margin-top | block above |
 | `spaceAfter` | 同上 | w:spacing after / afterLines | a:spcAft | — | margin-bottom | block below |
-| `lineHeight` | 数字是倍数，按 CSS 算（字号 × 倍数）；长度是固定值；`{ atLeast: 长度 }` 是最小值；`{ multiple: 倍数 }` 是 Word 的多倍行距（见下面「行距」） | w:spacing line + lineRule（数字写成 atLeast 字号 × 倍数；固定值 exact；最小值 atLeast；multiple 写 auto，line = 倍数 × 240） | a:lnSpc（spcPct / spcPts） | — | line-height（multiple 按字体换算成倍数） | top-edge / bottom-edge（multiple 按字体换算） |
+| `lineHeight` | 数字是倍数，至少字号 × 倍数；长度是固定值；`{ atLeast: 长度 }` 是最小值；`{ multiple: 倍数 }` 是 Word 的多倍行距（见下面「行距」） | w:spacing line + lineRule（数字写成 atLeast 字号 × 倍数；固定值 exact；最小值 atLeast；multiple 写 auto，line = 倍数 × 240） | a:lnSpc（spcPct / spcPts） | — | line-height（按 Word 的规则换算） | top-edge / bottom-edge（按 Word 的规则换算） |
 | `marginLeft` | 长度，整段左缩进 | w:ind start（`em` 时加 leftChars） | marL | indent（按字符数，只有整数） | margin-left | pad |
 | `marginRight` | 长度，整段右缩进 | w:ind end（`em` 时加 rightChars） | — | — | margin-right | pad |
 | `textIndent` | 长度，首行缩进 | w:ind firstLine（`em` 时用 firstLineChars） | indent（正数） | — | text-indent | first-line-indent |
@@ -93,30 +93,36 @@ document-render 的样式以 OOXML 为准：先把 Word、PowerPoint、Excel 能
 
 | 写法 | 一行多高 | 什么时候用 |
 |---|---|---|
-| `1.5` | 字号 × 1.5，跟 CSS 一样 | 默认用这个，三种格式行高一致 |
+| `1.5` | 至少字号 × 1.5，字比它高时撑开 | 默认用这个，三种格式行高一致 |
 | `"20pt"` | 固定 20pt | 要精确对齐时 |
 | `{ "atLeast": "18pt" }` | 至少 18pt，字大了会撑高 | 混排大字、图片时 |
 | `{ "multiple": 1.5 }` | 字体自己的单倍行高 × 1.5，跟 Word 的「多倍行距」一样 | 要和 Word 做的文档对上时，`document-render parse` 读出来的就是这种 |
 
-字体的单倍行高不是字号，是字体文件里定的。Word（Windows）按 GDI 的 TEXTMETRIC 算：
+pdf 和 html 的行高照 Windows 版 Word 排 docx 的规则算（2026-11-18 在 Word 2024 上实测），三种格式出来一样高。
 
-```
-单倍行高 = usWinAscent + usWinDescent
-         + max(0, (hhea.ascender − hhea.descender + hhea.lineGap) − (usWinAscent + usWinDescent))
-再除以 unitsPerEm，得到字号的倍数
-```
+**一种字体的单倍行高**不是字号，要看字体文件：
 
-usWinAscent、usWinDescent 在 OS/2 表里，hhea 是水平排版的表头；后半截是 GDI 的 tmExternalLeading（见 OpenType 规范 Recommendations 一章的「Baseline to Baseline Distances」）。比如微软雅黑约 1.32 倍字号。所以 Word 里「1.5 倍行距」的雅黑段落，行高是字号的 1.98 倍左右，不是 1.5 倍。
+- 西文字体：fsSelection 的 bit7（USE_TYPO_METRICS）关着时，取 win（usWinAscent + usWinDescent）和 hhea（含 lineGap）里大的那个，多出 win 的部分加在基线上面；bit7 开着时只看 typo（含 typoLineGap）。比如 Calibri 1.221、Arial 1.150、Segoe UI 1.330。
+- 东亚字体（OS/2 的 ulCodePageRange1 里有日文、简中、韩文、繁中任一位）：不看 hhea，在 win 全高的上下各加 0.15 倍（按字体单位四舍五入），所以约是 1.3 倍。微软雅黑 1.715、等线 1.354、宋体 1.297、MiSans 1.724。东亚字体排西文字母也是这么高。
+
+**一行里有几种字体**（中文配西文、编号用 Symbol）：上沿取各字体最高的 ascent，下沿取最深的 descent。有中文时算上 eastAsia 字体，没有时只算西文字体；`listMarkerFont` 写了的话编号字体也算。
+
+**四种写法怎么算**：
+
+- `{ multiple: m }`：混排单倍 + (m − 1) × 最高的那个字体单倍，多出来的加在基线下面。
+- 数字 `x`：docx 写成「至少 字号 × x」（不写 auto，因为 auto 乘的是字体的单倍，雅黑比宋体高三成多）。所以行高是 max(字号 × x, 混排单倍)，多出来的加在基线上面。
+- `{ atLeast: v }`：max(v, 混排单倍)，多出来的加在基线上面。
+- 固定值 `v`：就是 v，基线在 0.8 × v 处，跟字体无关。字比它高时会和上一行叠起来，Word 也这样。
 
 各格式的做法：
 
-- docx：直接写 `w:spacing w:line="倍数 × 240" w:lineRule="auto"`，Word 自己算。
-- pdf：用本机找到的字体按上面的公式算出单倍行高，乘倍数，多出来的高度对半分到字的上下。
-- html：同样算出来，写成 `line-height` 的数字（字号的倍数）。浏览器实际用的字体和生成时找到的不一样时，行高会有出入。
+- docx：数字写 `w:lineRule="atLeast"`，固定值写 exact，最小值写 atLeast，multiple 写 auto（line = 倍数 × 240），Word 自己算。fontTable 里给用到的字体写上 charset（简中字体 86、日文 80、韩文 81、繁中 88），Windows Word 只有 charset 和字体对得上时才乘 1.3，写成 00 就不乘。
+- pdf：用本机找到的字体按上面的规则算出基线上下各多少，写进 Typst 的 top-edge、bottom-edge。表格每行加上它上面那条横线的粗细，最后一行再加下面那条，跟 Word 一样。
+- html：同样算出行高，写成 `line-height`（字号的倍数，固定值写长度）。CSS 只能定行高，基线在行里的位置还是浏览器自己分；浏览器用的字体和生成时找到的不一样时，行高会有出入。
 - markdown：不管行距。
-- 一段里写了西文字体和中文字体时，取两种字体单倍行高里大的那个，跟 Word 按一行里最高的字体算一样。
-- 字体都找不到时按 1.17 倍字号算。
-- Word 文档开了文档网格（`w:docGrid` 的 type 是 lines、linesAndChars）时，Word 会把行高凑成网格行距的整数倍。document-render 不做网格对齐，parse 时给警告。
+- 字体都找不到时按 0.88 + 0.29 = 1.17 倍字号算。
+- 字体按「列表里第一个本机找得到的」算，和 pdf 实际用的一样；docx 只写列表里第一个。本机没有、Word 那台有的字体（比如 Linux 上没有 PingFang SC），pdf 和 Word 会对不上。
+- document-render 写的 docx 不带文档网格（`w:docGrid`），所以不做网格对齐。parse 读到带网格的 Word 文档时给警告。
 
 ## 四、边框（对应 w:pBdr、w:tblBorders、w:tcBorders、a:ln、xlsx border）
 
