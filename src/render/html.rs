@@ -37,6 +37,7 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> Output {
         tiles: Vec::new(),
         cjk: false,
         marker_font: None,
+        run_cjk: false,
     };
     let lang = doc.meta.lang.as_deref().unwrap_or("zh-CN");
     let title = doc.meta.title.as_deref().unwrap_or("document-render");
@@ -298,6 +299,8 @@ struct Html<'a> {
     cjk: bool,
     /// 正在写的列表项的编号字体和编号字号比例，行高也算上它
     marker_font: Option<(String, f32)>,
+    /// 正在写的这段文字（run）里有没有中日韩文字；上标下标的字号偏移看东亚字体还是西文字体
+    run_cjk: bool,
 }
 
 const TILES_MARK: &str = "/*document-render-tiles*/";
@@ -1061,7 +1064,9 @@ impl Html<'_> {
         }
         let mut b = base.clone();
         b.background = None;
+        self.run_cjk = metrics::has_cjk(&r.text);
         let mut css = self.css(s, Some(&b), id, Ctx::Inline);
+        self.run_cjk = false;
         // 段落上的 highlight 也要落到每一段文字上
         if let Some(h) = &s.highlight
             && !css.contains("background")
@@ -1203,7 +1208,17 @@ impl Html<'_> {
         if let Some(v) = s.vertical_align {
             match (v, ctx) {
                 (VerticalAlign::Super | VerticalAlign::Sub, _) => {
-                    let _ = write!(o, "vertical-align:{};font-size:0.75em;", v.as_str());
+                    // 跟 Word、pdf 一样用字体 OS/2 里的上标下标字号和偏移。
+                    // vertical-align 的 em 按缩小后的字号算，所以偏移要除以 size。
+                    let sup = v == VerticalAlign::Super;
+                    let (size, off) = metrics::script_metrics(s, self.run_cjk, sup);
+                    let off = if sup { off } else { -off } / size;
+                    let _ = write!(
+                        o,
+                        "vertical-align:{}em;font-size:{}em;",
+                        (off * 1000.0).round() / 1000.0,
+                        (size * 1000.0).round() / 1000.0
+                    );
                 }
                 (_, Ctx::Cell) => {
                     let _ = write!(

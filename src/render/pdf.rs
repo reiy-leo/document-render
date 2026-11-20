@@ -805,10 +805,19 @@ impl Markup<'_> {
             Some(Caps::All) => piece = format!("#upper[{piece}]"),
             None => {}
         }
-        match s.vertical_align {
-            Some(VerticalAlign::Super) => piece = format!("#super[{piece}]"),
-            Some(VerticalAlign::Sub) => piece = format!("#sub[{piece}]"),
-            _ => {}
+        // 上标下标跟 Word 一样用字体 OS/2 里的字号和偏移；有中日韩文字时看东亚字体。
+        // Typst 的 auto 只看字体列表里第一个字体（西文），所以这里写死成 pt。
+        if let Some(v @ (VerticalAlign::Super | VerticalAlign::Sub)) = s.vertical_align {
+            let sup = v == VerticalAlign::Super;
+            let (size, off) = metrics::script_metrics(s, metrics::has_cjk(&r.text), sup);
+            let fs = s.size_pt();
+            let shift = if sup { -off } else { off } * fs;
+            piece = format!(
+                "#{}(typographic: false, size: {}pt, baseline: {}pt)[{piece}]",
+                if sup { "super" } else { "sub" },
+                (size * fs * 1000.0).round() / 1000.0,
+                (shift * 1000.0).round() / 1000.0
+            );
         }
         if let Some(u) = s.underline.filter(|u| u.on()) {
             let mut st = Vec::new();

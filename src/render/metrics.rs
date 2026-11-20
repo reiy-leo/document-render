@@ -65,6 +65,12 @@ pub struct Os2 {
     pub win_desc: f32,
     /// ulCodePageRange1；OS/2 版本 0 没有这个字段，按 0 算
     pub code_pages: u32,
+    /// 下标、上标的字号和偏移（ySubscriptYSize、ySubscriptYOffset、ySuperscriptYSize、
+    /// ySuperscriptYOffset，字体单位，偏移都是正数：下标往下、上标往上）
+    pub sub_size: f32,
+    pub sub_offset: f32,
+    pub sup_size: f32,
+    pub sup_offset: f32,
 }
 
 /// 一种字体在 Word 里的 ascent、descent（字号的倍数，都是正数），东亚字体已经加过上下的 e。
@@ -176,6 +182,10 @@ fn parse_os2(d: &[u8]) -> Option<Os2> {
         win_asc: u16_at(74)? as f32,
         win_desc: u16_at(76)? as f32,
         code_pages,
+        sub_size: i16_at(12)?,
+        sub_offset: i16_at(16)?,
+        sup_size: i16_at(20)?,
+        sup_offset: i16_at(24)?,
     })
 }
 
@@ -214,6 +224,48 @@ fn first_found<'a>(names: impl IntoIterator<Item = &'a str>) -> Option<FontMetri
         .map(str::trim)
         .filter(|x| !x.is_empty())
         .find_map(|n| family_raw(n).and_then(|r| r.word()))
+}
+
+/// 上标、下标的字号和偏移（都是原字号的倍数，偏移正数：上标往上、下标往下）。
+/// Word 直接用字体 OS/2 里的值（2026-11-20 在 Windows Word 2024 上量过：宋体、雅黑 20pt 上标
+/// 字号 9.96、抬高 9.96，Calibri 字号 12.96、抬高 6.48），Typst 的 super/sub 默认也读它们。
+/// 西文看 latin 字体，有中日韩文字时看东亚字体；字体里没有这些值时用 Typst 的默认
+/// （上标 0.6 倍、抬高 0.5，下标 0.6 倍、下移 0.2）。
+pub fn script_metrics(s: &Style, cjk: bool, sup: bool) -> (f32, f32) {
+    let f = s.font_family.as_ref();
+    let names: Vec<&str> = if cjk {
+        f.and_then(|f| f.east_asia.as_deref())
+            .into_iter()
+            .chain(DEFAULT_EAST_ASIA.iter().copied())
+            .collect()
+    } else {
+        f.and_then(|f| f.latin.as_deref())
+            .into_iter()
+            .chain(DEFAULT_LATIN.iter().copied())
+            .collect()
+    };
+    let raw = names
+        .into_iter()
+        .flat_map(|x| x.split(','))
+        .map(str::trim)
+        .filter(|x| !x.is_empty())
+        .find_map(family_raw);
+    script_from(raw, sup)
+}
+
+fn script_from(raw: Option<RawMetrics>, sup: bool) -> (f32, f32) {
+    let fallback = if sup { (0.6, 0.5) } else { (0.6, 0.2) };
+    let Some(r) = raw else { return fallback };
+    let Some(o) = r.os2 else { return fallback };
+    let (size, off) = if sup {
+        (o.sup_size, o.sup_offset)
+    } else {
+        (o.sub_size, o.sub_offset)
+    };
+    if size <= 0.0 || r.upm <= 0.0 {
+        return fallback;
+    }
+    (size / r.upm, off / r.upm)
 }
 
 /// 一行的度量：最大 ascent、最大 descent、各字体单倍里最大的（都是段落字号的倍数）。
@@ -478,11 +530,28 @@ mod tests {
                 win_asc: win.0,
                 win_desc: win.1,
                 code_pages: cp,
+                ..Default::default()
             }),
         }
     }
 
     const SC: u32 = 1 | (1 << 18);
+
+    #[test]
+    fn script_metrics_from_os2() {
+        let mut r = raw(256.0, (220.0, 36.0), (220.0, -36.0, 36.0), SC);
+        let o = r.os2.as_mut().unwrap();
+        o.sup_size = 128.0;
+        o.sup_offset = 128.0;
+        o.sub_size = 128.0;
+        o.sub_offset = 32.0;
+        assert_eq!(script_from(Some(r), true), (0.5, 0.5));
+        assert_eq!(script_from(Some(r), false), (0.5, 0.125));
+        // 没有 OS/2 值时用 Typst 的默认
+        let r0 = raw(1000.0, (800.0, 200.0), (800.0, -200.0, 0.0), 0);
+        assert_eq!(script_from(Some(r0), true), (0.6, 0.5));
+        assert_eq!(script_from(None, false), (0.6, 0.2));
+    }
 
     #[test]
     fn simsun_rounds_e_in_font_units() {
