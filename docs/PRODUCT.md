@@ -19,8 +19,10 @@ document-render 把一份 JSON 文档渲染成 docx、pdf、html，也能出 Mar
   - `document-render catalog`：列出能用的组件，加 `--json` 输出 schema（还带容器标记和能单独设样式的部位 `parts`）。
   - `document-render parse doc.docx -o doc.json`：反过来，从 Word 文档解析出 JSON，图片导到 `doc.assets/`。见下面「从 docx 解析」。
   - 输入写 `-` 从标准输入读；输出写 `-` 时配 `--format` 写到标准输出。
+  - `document-render guide`：打印给 AI agent 看的写文档指南 [docs/AGENT.md](AGENT.md)。
   - `document-render mcp`：以 MCP server 方式运行（stdio）。
-- MCP 工具：`render`（JSON 进，文件出）、`check`、`list_components`（带每个组件的 props 说明，方便 AI 写对）、`parse`（docx 进，JSON 出）。见下面「MCP」。
+- MCP 工具：`render`（JSON 进，文件出）、`check`、`list_components`（带每个组件的 props 说明，方便 AI 写对）、`parse`（docx 进，JSON 出）、`guide`（写文档指南）；指南也是资源 `document-render://agent-guide`。见下面「MCP」。
+- 写文档指南 [docs/AGENT.md](AGENT.md)：一个文件讲完文档结构、全部组件、样式字段、完整示例和常见错误，agent 读完不用再看别的。编进二进制，`guide` 命令、MCP 工具和资源返回的都是它。
 - 自定义组件：JSON 定义文件，用内置组件拼。
 
 ## 第二版
@@ -145,7 +147,7 @@ document-render parse report.docx -o out/report.json --assets img   # 图片导�
 
 `document-render mcp` 在标准输入输出上跑一个 MCP server，给 Claude Desktop、Cursor 这类 AI 客户端用。只做 stdio，不做 HTTP。标准输出只走协议，警告放进工具结果里返回。
 
-四个工具，做的事跟同名命令一样：
+五个工具，做的事跟同名命令一样：
 
 | 工具 | 参数 | 返回 |
 | --- | --- | --- |
@@ -153,6 +155,9 @@ document-render parse report.docx -o out/report.json --assets img   # 图片导�
 | `check` | `document`（必填）、`catalog`、`style_sets`、`style_set`、`base_dir` | `ok`、`errors`、`warnings`、`elements`（展开后的元素个数） |
 | `list_components` | `catalog` | 组件名到说明的对象，跟 `catalog --json` 一样 |
 | `parse` | `input`（必填，docx 路径）、`output`、`assets` | 写了 `output` 时是 `path`；没写时 JSON 放在 `document` 里，另带 `base_dir`。都带 `assets`（图片目录和张数）、`warnings` |
+| `guide` | 无 | 写文档指南 docs/AGENT.md 全文，放在 `content` 的文字里 |
+
+另有一个资源 `document-render://agent-guide`（`text/markdown`），内容同 `guide`。会读资源的客户端用 `resources/read` 取；不支持资源的客户端调 `guide` 工具。
 
 - `document` 写成 JSON 对象最好，写成 JSON 字符串也行。自定义组件可以放在文档的 `components` 里一起传。
 - `catalog`、`style_sets` 写一个路径或路径数组都行，跟命令行的 `--catalog`、`--style-sets` 一样。

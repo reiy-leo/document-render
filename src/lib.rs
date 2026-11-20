@@ -18,6 +18,13 @@ use std::{
 
 use anyhow::{Context, Result};
 
+/// 给 AI agent 看的写文档指南（docs/AGENT.md），编进二进制。
+/// 命令行 `document-render guide`、MCP 的 `guide` 工具和资源 [`AGENT_GUIDE_URI`] 都返回它。
+pub const AGENT_GUIDE: &str = include_str!("../docs/AGENT.md");
+
+/// MCP 资源里这份指南的 URI。
+pub const AGENT_GUIDE_URI: &str = "document-render://agent-guide";
+
 /// 文档以外的东西：自定义组件、样式集文件、命令行选的样式集。
 #[derive(Debug, Default, Clone)]
 pub struct Env {

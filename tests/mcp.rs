@@ -1,5 +1,5 @@
 //! mcp：起子进程跑 `document-render mcp`，按 MCP 客户端的顺序发 JSON-RPC：
-//! initialize → tools/list → tools/call（list_components、render、check、parse）。
+//! initialize → tools/list → resources/list、resources/read → tools/call（guide、list_components、render、check、parse）。
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -113,12 +113,13 @@ fn mcp_end_to_end() {
     assert_eq!(res["serverInfo"]["name"], "document-render", "{init}");
     assert_eq!(res["protocolVersion"], "2025-06-18", "{init}");
     assert!(res["capabilities"]["tools"].is_object(), "{init}");
+    assert!(res["capabilities"]["resources"].is_object(), "{init}");
 
     // tools/list
     let list = c.request("tools/list", json!({}));
     let tools = list["result"]["tools"].as_array().unwrap();
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
-    for n in ["render", "check", "list_components", "parse"] {
+    for n in ["render", "check", "list_components", "parse", "guide"] {
         assert!(names.contains(&n), "缺工具 {n}：{names:?}");
     }
     let render = tools.iter().find(|t| t["name"] == "render").unwrap();
@@ -136,6 +137,38 @@ fn mcp_end_to_end() {
     }
     assert_eq!(render["inputSchema"]["required"], json!(["document"]));
     assert!(!render["description"].as_str().unwrap().is_empty());
+
+    let lc = tools
+        .iter()
+        .find(|t| t["name"] == "list_components")
+        .unwrap();
+    assert!(
+        lc["description"].as_str().unwrap().contains("agent-guide"),
+        "{lc}"
+    );
+
+    // 写文档指南：资源和 guide 工具都返回 docs/AGENT.md 全文
+    let guide = std::fs::read_to_string("docs/AGENT.md").unwrap();
+    let r = c.request("resources/list", json!({}));
+    let res = r["result"]["resources"].as_array().unwrap();
+    let g = res
+        .iter()
+        .find(|x| x["uri"] == "document-render://agent-guide")
+        .unwrap_or_else(|| panic!("资源列表里没有指南：{r}"));
+    assert_eq!(g["mimeType"], "text/markdown", "{g}");
+    let r = c.request(
+        "resources/read",
+        json!({ "uri": "document-render://agent-guide" }),
+    );
+    let contents = &r["result"]["contents"][0];
+    assert_eq!(contents["uri"], "document-render://agent-guide", "{r}");
+    assert_eq!(contents["mimeType"], "text/markdown", "{r}");
+    assert_eq!(contents["text"].as_str().unwrap(), guide);
+    let r = c.request("resources/read", json!({ "uri": "document-render://nope" }));
+    assert!(r.get("error").is_some(), "读不存在的资源应该报错：{r}");
+    let r = c.request("tools/call", json!({ "name": "guide", "arguments": {} }));
+    assert!(!r["result"]["isError"].as_bool().unwrap_or(false), "{r}");
+    assert_eq!(r["result"]["content"][0]["text"].as_str().unwrap(), guide);
 
     // list_components：内置加自定义
     let (err, comps) = c.call("list_components", json!({ "catalog": "examples/catalog" }));

@@ -1,6 +1,7 @@
 //! `document-render mcp`：stdio 上的 MCP server。
 //!
-//! 工具：render、check、list_components、parse，做的事跟同名命令行一样，渲染都走库里的同一套函数。
+//! 工具：render、check、list_components、parse，做的事跟同名命令行一样，渲染都走库里的同一套函数；
+//! 另有 guide 工具和资源 `document-render://agent-guide`，返回写文档指南 docs/AGENT.md。
 //! 标准输出只走 MCP 协议；警告放进工具结果里返回，别的提示打到标准错误。
 //! 出错时返回 isError 的工具结果，不让 server 退出。
 
@@ -9,9 +10,14 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use document_render::{Env, render};
 use rmcp::{
-    ServerHandler, ServiceExt,
+    ErrorData, ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig},
+    model::{
+        CallToolResult, ContentBlock, Implementation, ListResourcesResult, PaginatedRequestParams,
+        ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, Resource,
+        ResourceContents, ServerCapabilities, ServerConfig,
+    },
+    service::{RequestContext, RoleServer},
     tool, tool_handler, tool_router,
 };
 use schemars::JsonSchema;
@@ -39,7 +45,8 @@ pub fn run() -> Result<()> {
 }
 
 const INSTRUCTIONS: &str = "document-render 把一份 JSON 文档渲染成 docx、pdf、html 或 Markdown，也能把 docx 解析回 JSON。\
-先调 list_components 看能用哪些组件和每个组件的 props，写好文档后可以先 check，再 render。\
+先调 guide（或读资源 document-render://agent-guide）拿写文档指南，里面有文档结构、全部组件和样式字段、完整示例和常见错误；\
+再按需调 list_components 看组件的 props，写好文档后先 check，再 render。\
 文件路径都建议写绝对路径：server 的当前目录由客户端决定，不一定是你以为的目录。";
 
 const DOCUMENT_DESC: &str = "文档 JSON。写成对象，也可以写成 JSON 字符串。结构：\
@@ -167,7 +174,8 @@ impl Server {
     #[tool(
         name = "list_components",
         description = "列出能用的组件：内置组件加 catalog 里的自定义组件。返回一个对象，键是组件名，值里有 description（说明）、\
-container（能不能写 children）、parts（能单独设样式的部位，写在元素的 parts 里）、props（props 的 JSON Schema）；自定义组件带 custom: true。写文档前先看这个。"
+container（能不能写 children）、parts（能单独设样式的部位，写在元素的 parts 里）、props（props 的 JSON Schema）；自定义组件带 custom: true。\
+这里只有 props 的 schema，样式字段、文档结构、写法示例和常见错误在 guide 工具（或资源 document-render://agent-guide）返回的指南里，第一次写文档先读指南。"
     )]
     async fn list_components(&self, Parameters(p): Parameters<ListParams>) -> CallToolResult {
         blocking(move || list_tool(p)).await
@@ -182,17 +190,76 @@ container（能不能写 children）、parts（能单独设样式的部位，写
     async fn parse(&self, Parameters(p): Parameters<ParseParams>) -> CallToolResult {
         blocking(move || parse_tool(p)).await
     }
+
+    #[tool(
+        name = "guide",
+        description = "返回 document-render 的写文档指南（Markdown 全文，跟资源 document-render://agent-guide 一样）：\
+怎么调用、文档结构、每个内置组件的 props 和示例、全部样式字段和取值、样式集和变量、自定义组件、能通过 check 的完整示例、各格式差异和常见错误。\
+第一次写文档前先读它，读完就能一次写对。"
+    )]
+    async fn guide(&self) -> CallToolResult {
+        CallToolResult::success(vec![ContentBlock::text(document_render::AGENT_GUIDE)])
+    }
+}
+
+/// 资源列表里的那份指南。
+fn guide_resource() -> Resource {
+    Resource::new(document_render::AGENT_GUIDE_URI, "agent-guide")
+        .with_title("document-render 写文档指南")
+        .with_description(
+            "给 AI agent 的写文档指南：文档结构、全部组件和样式字段、完整示例、常见错误",
+        )
+        .with_mime_type("text/markdown")
+        .with_size(document_render::AGENT_GUIDE.len() as u64)
 }
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for Server {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new(
-                "document-render",
-                env!("CARGO_PKG_VERSION"),
-            ))
-            .with_instructions(INSTRUCTIONS)
+        ServerConfig::new(
+            ServerCapabilities::builder()
+                .enable_resources()
+                .enable_tools()
+                .build(),
+        )
+        .with_server_info(Implementation::new(
+            "document-render",
+            env!("CARGO_PKG_VERSION"),
+        ))
+        .with_instructions(INSTRUCTIONS)
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, ErrorData> {
+        Ok(ListResourcesResult::with_all_items(vec![guide_resource()]))
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResponse, ErrorData> {
+        if request.uri != document_render::AGENT_GUIDE_URI {
+            return Err(ErrorData::resource_not_found(
+                format!(
+                    "没有资源 `{}`，现有：{}",
+                    request.uri,
+                    document_render::AGENT_GUIDE_URI
+                ),
+                None,
+            ));
+        }
+        Ok(ReadResourceResult::new(vec![
+            ResourceContents::text(
+                document_render::AGENT_GUIDE,
+                document_render::AGENT_GUIDE_URI,
+            )
+            .with_mime_type("text/markdown"),
+        ])
+        .into())
     }
 }
 

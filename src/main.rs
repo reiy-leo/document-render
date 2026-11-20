@@ -86,6 +86,8 @@ enum Cmd {
         #[arg(long)]
         assets: Option<PathBuf>,
     },
+    /// 打印给 AI agent 看的写文档指南（docs/AGENT.md）：结构、全部组件、样式字段、完整示例、常见错误
+    Guide,
     /// 以 MCP server 方式运行（stdio），给 Claude Desktop、Cursor 这类 AI 客户端调用
     Mcp,
 }
@@ -187,6 +189,10 @@ fn main() -> Result<()> {
             output,
             assets,
         } => parse_cmd(&input, output.as_deref(), assets.as_deref()),
+        Cmd::Guide => {
+            std::io::stdout().write_all(document_render::AGENT_GUIDE.as_bytes())?;
+            Ok(())
+        }
         Cmd::Mcp => mcp::run(),
     }
 }

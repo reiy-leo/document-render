@@ -20,7 +20,7 @@ document-render：一份 JSON，按注册好的组件渲染成 docx、pdf、html
 ```
 src/main.rs         命令行入口
 src/lib.rs          库入口，render_str、components_json、parse_docx_with_assets 给命令行和 MCP 共用
-src/mcp.rs          MCP server（rmcp，stdio）：render、check、list_components、parse 四个工具
+src/mcp.rs          MCP server（rmcp，stdio）：render、check、list_components、parse、guide 五个工具，资源 document-render://agent-guide
 src/doc.rs          文档模型、校验、建元素树
 src/components.rs   内置组件的 props 和 schema
 src/style.rs        样式字段和取值解析
@@ -31,7 +31,7 @@ src/render/         各格式渲染器：html、docx、pdf（Typst）、markdown
 src/parse/          docx 解析回 JSON：word.rs 读样式表、编号、w:rPr / w:pPr，table.rs 读表格，omml.rs 把公式转成 LaTeX
 tests/              集成测试
 examples/       示例文档；examples/catalog/ 是示例组件定义
-docs/           产品说明和设计文档
+docs/           产品说明和设计文档；docs/AGENT.md 是给 AI agent 的写文档指南，编进二进制（guide 命令、MCP guide 工具和资源）
 .agents/        给 AI 用的 skills、rules、prompts、memory
 ```
 
@@ -54,7 +54,8 @@ cargo test
 
 ## 规范
 
-- 每加一个组件，同时写好三样：props 的 schema、三个渲染器的实现、`examples/` 里的用例。
+- 每加一个组件，同时写好四样：props 的 schema、三个渲染器的实现、`examples/` 里的用例、[docs/AGENT.md](docs/AGENT.md) 里的一节。
+- 加组件、加 prop、加部位、加样式字段或取值，或者改了默认值、校验规则，同步改 [docs/AGENT.md](docs/AGENT.md)。`tests/agent_doc.rs` 会查每个组件、prop、部位、样式字段名都写到了，标了 `<!-- check -->` 的示例能通过 check；取值、默认值和规则它查不到，要自己记得改。
 - 渲染器只认内置组件。自定义组件在渲染前展开。
 - 某个格式表达不了的样式，给警告，不报错。
 - 报错信息用中文，带上出错的元素 id。
