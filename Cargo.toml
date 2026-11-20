@@ -25,6 +25,8 @@ typst-pdf = "0.15.1"
 typst-layout = "0.15.1"
 ttf-parser = "0.25"
 zip = { version = "8", default-features = false, features = ["deflate"] }
+rmcp = { version = "3.11.0", features = ["server", "macros", "transport-io"] }
+tokio = { version = "1", features = ["rt", "io-std"] }
 typst-kit = { version = "0.15.1", default-features = false, features = ["embedded-fonts", "scan-fonts"] }
 
 

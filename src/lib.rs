@@ -136,3 +136,85 @@ pub fn load_env(
     }
     Ok(env)
 }
+
+/// 组件目录的 JSON：内置组件加 `catalog` 里的自定义组件，每个带说明、是不是容器、部位和 props 的 JSON Schema。
+/// `catalog --json` 和 MCP 的 list_components 共用。
+pub fn components_json(catalog: &custom::Catalog) -> serde_json::Value {
+    let mut m = serde_json::Map::new();
+    for s in components::BUILTINS {
+        let mut v = serde_json::json!({
+            "description": s.description,
+            "container": s.container,
+            "props": (s.schema)(),
+        });
+        if !s.parts.is_empty() {
+            v["parts"] = serde_json::json!(s.parts);
+        }
+        m.insert(s.name.into(), v);
+    }
+    for d in catalog.defs() {
+        m.insert(
+            d.name.clone(),
+            serde_json::json!({
+                "description": d.description,
+                "container": d.container,
+                "custom": true,
+                "props": d.props_schema(),
+            }),
+        );
+    }
+    serde_json::Value::Object(m)
+}
+
+/// [`parse_docx_with_assets`] 的结果。
+pub struct ParsedFiles {
+    /// 排好版的 JSON 文本，末尾带换行
+    pub json: String,
+    /// JSON 里图片路径的前缀（相对 JSON 所在目录，或者绝对路径）
+    pub assets_prefix: String,
+    /// 图片实际写到的目录；没有图片时是 None
+    pub assets_dir: Option<PathBuf>,
+    pub asset_count: usize,
+    pub warnings: Vec<String>,
+}
+
+/// 解析 docx，把图片写到 `json_dir` 下的图片目录，返回 JSON 文本。命令行 parse 和 MCP 共用。
+/// `stem` 决定默认的图片目录名「stem.assets」；`assets` 给了就用它（相对 `json_dir`）。
+pub fn parse_docx_with_assets(
+    bytes: &[u8],
+    stem: &str,
+    json_dir: &Path,
+    assets: Option<&Path>,
+) -> Result<ParsedFiles> {
+    let rel = assets
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from(format!("{stem}.assets")));
+    let prefix = rel.to_string_lossy().replace('\\', "/");
+    let parsed = parse::docx(
+        bytes,
+        &parse::Options {
+            assets_dir: prefix.clone(),
+        },
+    )?;
+    let mut assets_dir = None;
+    if !parsed.assets.is_empty() {
+        let dir = if rel.is_absolute() {
+            rel.clone()
+        } else {
+            json_dir.join(&rel)
+        };
+        std::fs::create_dir_all(&dir).with_context(|| format!("建不了目录 {}", dir.display()))?;
+        for (name, data) in &parsed.assets {
+            let p = dir.join(name);
+            std::fs::write(&p, data).with_context(|| format!("写不了 {}", p.display()))?;
+        }
+        assets_dir = Some(dir);
+    }
+    Ok(ParsedFiles {
+        json: serde_json::to_string_pretty(&parsed.json)? + "\n",
+        assets_prefix: prefix,
+        assets_dir,
+        asset_count: parsed.assets.len(),
+        warnings: parsed.warnings,
+    })
+}

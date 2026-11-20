@@ -7,6 +7,8 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use document_render::{components, render};
 
+mod mcp;
+
 #[derive(Parser)]
 #[command(
     name = "document-render",
@@ -84,7 +86,7 @@ enum Cmd {
         #[arg(long)]
         assets: Option<PathBuf>,
     },
-    /// 以 MCP server 方式运行（stdio），还没实现
+    /// 以 MCP server 方式运行（stdio），给 Claude Desktop、Cursor 这类 AI 客户端调用
     Mcp,
 }
 
@@ -156,29 +158,10 @@ fn main() -> Result<()> {
         Cmd::Catalog { json, catalog } => {
             let cat = document_render::load_env(None, &catalog, &[], None)?.catalog;
             if json {
-                let mut m = serde_json::Map::new();
-                for s in components::BUILTINS {
-                    m.insert(
-                        s.name.into(),
-                        serde_json::json!({
-                            "description": s.description,
-                            "container": s.container,
-                            "props": (s.schema)(),
-                        }),
-                    );
-                }
-                for d in cat.defs() {
-                    m.insert(
-                        d.name.clone(),
-                        serde_json::json!({
-                            "description": d.description,
-                            "container": d.container,
-                            "custom": true,
-                            "props": d.props_schema(),
-                        }),
-                    );
-                }
-                println!("{}", serde_json::to_string_pretty(&m)?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&document_render::components_json(&cat))?
+                );
             } else {
                 for s in components::BUILTINS {
                     println!(
@@ -204,7 +187,7 @@ fn main() -> Result<()> {
             output,
             assets,
         } => parse_cmd(&input, output.as_deref(), assets.as_deref()),
-        Cmd::Mcp => bail!("MCP server 还没实现"),
+        Cmd::Mcp => mcp::run(),
     }
 }
 
@@ -229,48 +212,26 @@ fn parse_cmd(input: &Path, output: Option<&Path>, assets: Option<&Path>) -> Resu
         .and_then(|s| s.to_str())
         .unwrap_or("document")
         .to_string();
-    let rel = assets
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from(format!("{stem}.assets")));
-    let prefix = rel.to_string_lossy().replace('\\', "/");
-    let parsed = document_render::parse::docx(
-        &bytes,
-        &document_render::parse::Options {
-            assets_dir: prefix.clone(),
-        },
-    )
-    .with_context(|| format!("{} 解析不了", input.display()))?;
+    let parsed = document_render::parse_docx_with_assets(&bytes, &stem, &json_dir, assets)
+        .with_context(|| format!("{} 解析不了", input.display()))?;
     for w in &parsed.warnings {
         eprintln!("警告：{w}");
     }
-    if !parsed.assets.is_empty() {
-        let dir = if rel.is_absolute() {
-            rel.clone()
-        } else {
-            json_dir.join(&rel)
-        };
-        std::fs::create_dir_all(&dir).with_context(|| format!("建不了目录 {}", dir.display()))?;
-        for (name, data) in &parsed.assets {
-            let p = dir.join(name);
-            std::fs::write(&p, data).with_context(|| format!("写不了 {}", p.display()))?;
-        }
-    }
-    let text = serde_json::to_string_pretty(&parsed.json)? + "\n";
     match output {
         Some(o) => {
-            std::fs::write(o, text).with_context(|| format!("写不了 {}", o.display()))?;
-            if parsed.assets.is_empty() {
+            std::fs::write(o, &parsed.json).with_context(|| format!("写不了 {}", o.display()))?;
+            if parsed.asset_count == 0 {
                 eprintln!("已生成 {}", o.display());
             } else {
                 eprintln!(
                     "已生成 {}，图片 {} 张在 {}/",
                     o.display(),
-                    parsed.assets.len(),
-                    prefix
+                    parsed.asset_count,
+                    parsed.assets_prefix
                 );
             }
         }
-        None => std::io::stdout().write_all(text.as_bytes())?,
+        None => std::io::stdout().write_all(parsed.json.as_bytes())?,
     }
     Ok(())
 }
