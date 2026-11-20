@@ -42,7 +42,7 @@ document-render 的样式以 OOXML 为准：先把 Word、PowerPoint、Excel 能
 | `underline` | 布尔，或 `single` `double` `thick` `dotted` `dashed` `wavy` | w:u val | u | u（single、double，另有会计用） | text-decoration-style | underline（只有实线） |
 | `underlineColor` | 颜色 | w:u color | a:uFill | — | text-decoration-color | stroke |
 | `strike` | 布尔，或 `double` | w:strike / w:dstrike | strike（sngStrike / dblStrike） | strike（只有单线） | line-through | strike |
-| `verticalAlign` | `super` `sub` | w:vertAlign | baseline（±30000） | vertAlign | vertical-align | super / sub |
+| `verticalAlign` | `super` `sub`（字号和偏移取字体自带的上标下标值，跟 Word 一样；有中文时看东亚字体） | w:vertAlign | baseline（±30000） | vertAlign | vertical-align + font-size（按字体算） | super / sub（按字体算） |
 | `caps` | `all` `small` | w:caps / w:smallCaps | cap | — | text-transform / font-variant | smallcaps / upper |
 | `letterSpacing` | 长度 | w:spacing（twip） | spc（1/100 pt） | — | letter-spacing | tracking |
 | `highlight` | 颜色 | w:highlight（只有 16 种固定色）或 w:shd | a:highlight | — | background | highlight |
