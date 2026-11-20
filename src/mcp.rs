@@ -274,10 +274,15 @@ fn render_tool(p: RenderParams) -> Result<Value> {
     // 图片的基准目录：base_dir，其次 output 所在目录，最后是当前目录
     let image_dir = base_dir
         .clone()
-        .or_else(|| output.as_deref().and_then(Path::parent).map(Path::to_path_buf))
+        .or_else(|| {
+            output
+                .as_deref()
+                .and_then(Path::parent)
+                .map(Path::to_path_buf)
+        })
         .unwrap_or(here);
-    let (d, tree) =
-        document_render::prepare(&text, &env).context("document 不是合法的 document-render 文档")?;
+    let (d, tree) = document_render::prepare(&text, &env)
+        .context("document 不是合法的 document-render 文档")?;
     let out = render::render(
         &d,
         &tree,
@@ -352,7 +357,10 @@ fn parse_tool(p: ParseParams) -> Result<Value> {
     let output = p.output.as_deref().map(|o| absolute(o, &here));
     // 图片目录相对 JSON 所在目录；不写 output 时相对 docx 所在目录
     let json_dir = match &output {
-        Some(o) => o.parent().map(Path::to_path_buf).unwrap_or_else(|| here.clone()),
+        Some(o) => o
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| here.clone()),
         None => input.parent().map(Path::to_path_buf).unwrap_or(here),
     };
     let stem = output

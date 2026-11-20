@@ -124,7 +124,13 @@ fn mcp_end_to_end() {
     let render = tools.iter().find(|t| t["name"] == "render").unwrap();
     let props = &render["inputSchema"]["properties"];
     for k in [
-        "document", "output", "format", "paged", "style_set", "catalog", "base_dir",
+        "document",
+        "output",
+        "format",
+        "paged",
+        "style_set",
+        "catalog",
+        "base_dir",
     ] {
         assert!(props.get(k).is_some(), "render 缺参数 {k}：{render}");
     }
