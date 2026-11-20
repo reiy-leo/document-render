@@ -56,7 +56,7 @@ impl Client {
         }
     }
 
-    /// 调工具，返回 (是否出错, structuredContent 或文字内容)。
+    /// 调工具，返回是否出错，和 structuredContent（出错时是错误文字）。
     fn call(&mut self, name: &str, args: Value) -> (bool, Value) {
         let r = self.request("tools/call", json!({ "name": name, "arguments": args }));
         assert!(r.get("error").is_none(), "{name} 返回了协议错误：{r}");
@@ -165,6 +165,10 @@ fn mcp_end_to_end() {
 
     // render：docx 不给 output 是工具错误
     let (err, msg) = c.call("render", json!({ "document": hello(), "format": "docx" }));
+    assert!(err, "{msg}");
+
+    // render：少了 document 也是工具错误，不是协议错误
+    let (err, msg) = c.call("render", json!({ "output": dir.join("x.html") }));
     assert!(err, "{msg}");
 
     // render：错的文档返回工具错误，server 不退出

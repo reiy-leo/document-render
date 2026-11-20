@@ -18,8 +18,26 @@ document-render render report.json -o report.html --paged   # 屏幕上按页显
 document-render check report.json
 document-render parse report.docx -o report.json     # 反过来，从 Word 解析出 JSON，图片在 report.assets/
 document-render render report.json -o report.html --catalog my-components/ --style-sets themes/ --style-set formal
-document-render mcp
+document-render mcp                                   # MCP server（stdio），给 AI 客户端用
 ```
+
+## 给 AI 用（MCP）
+
+在 Claude Desktop、Cursor 的 MCP 配置里加上：
+
+```json
+{
+  "mcpServers": {
+    "document-render": { "command": "document-render", "args": ["mcp"] }
+  }
+}
+```
+
+Claude Code 用 `claude mcp add document-render -- document-render mcp`。
+
+AI 能调四个工具：`list_components` 看有哪些组件，`check` 校验文档，`render` 出 docx、pdf、html、md，`parse` 把 docx 读成 JSON。参数和更多客户端的写法见 [docs/PRODUCT.md](docs/PRODUCT.md) 的「MCP」一节。
+
+## 文档
 
 文档格式和计划见 [docs/PRODUCT.md](docs/PRODUCT.md)。
 

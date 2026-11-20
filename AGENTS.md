@@ -19,7 +19,8 @@ document-render：一份 JSON，按注册好的组件渲染成 docx、pdf、html
 
 ```
 src/main.rs         命令行入口
-src/lib.rs          库入口，render_str 给命令行和 MCP 共用
+src/lib.rs          库入口，render_str、components_json、parse_docx_with_assets 给命令行和 MCP 共用
+src/mcp.rs          MCP server（rmcp，stdio）：render、check、list_components、parse 四个工具
 src/doc.rs          文档模型、校验、建元素树
 src/components.rs   内置组件的 props 和 schema
 src/style.rs        样式字段和取值解析
@@ -34,7 +35,6 @@ docs/           产品说明和设计文档
 .agents/        给 AI 用的 skills、rules、prompts、memory
 ```
 
-以后再加 `src/mcp.rs`。
 
 ## 构建环境
 
@@ -47,6 +47,7 @@ cargo build
 cargo run -- check examples/hello.json
 cargo run -- render examples/showcase.json -o /tmp/showcase.html
 cargo run -- catalog --json
+cargo run -- mcp                 # MCP server，读写标准输入输出
 cargo fmt && cargo clippy -- -D warnings
 cargo test
 ```
@@ -57,6 +58,7 @@ cargo test
 - 渲染器只认内置组件。自定义组件在渲染前展开。
 - 某个格式表达不了的样式，给警告，不报错。
 - 报错信息用中文，带上出错的元素 id。
+- MCP server 的标准输出只能走协议：库里不要 `println!`，提示打到标准错误，警告放进返回值。
 - 中文文档写得像人说话，不要翻译腔。
 - 每轮工作做完就 commit 并 push 到 main。
 

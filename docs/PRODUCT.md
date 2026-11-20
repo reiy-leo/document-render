@@ -16,11 +16,11 @@ document-render 把一份 JSON 文档渲染成 docx、pdf、html，也能出 Mar
 - 命令行：
   - `document-render render doc.json -o out.docx`：按输出文件的扩展名选格式。
   - `document-render check doc.json`：只校验，不出文件。
-  - `document-render catalog`：列出能用的组件，加 `--json` 输出 schema。
+  - `document-render catalog`：列出能用的组件，加 `--json` 输出 schema（还带容器标记和能单独设样式的部位 `parts`）。
   - `document-render parse doc.docx -o doc.json`：反过来，从 Word 文档解析出 JSON，图片导到 `doc.assets/`。见下面「从 docx 解析」。
   - 输入写 `-` 从标准输入读；输出写 `-` 时配 `--format` 写到标准输出。
   - `document-render mcp`：以 MCP server 方式运行（stdio）。
-- MCP 工具：`render`（JSON 进，文件出）、`check`、`list_components`（带每个组件的 props 说明，方便 AI 写对）。
+- MCP 工具：`render`（JSON 进，文件出）、`check`、`list_components`（带每个组件的 props 说明，方便 AI 写对）、`parse`（docx 进，JSON 出）。见下面「MCP」。
 - 自定义组件：JSON 定义文件，用内置组件拼。
 
 ## 第二版
@@ -141,6 +141,67 @@ document-render parse report.docx -o out/report.json --assets img   # 图片导�
 - 文档网格的行网格对齐（docGrid type 是 lines 时 Word 把行高凑成网格的整数倍）不做，给警告。
 - 渲染器本来就表达不了的东西读回来也一样：比如同一级列表在 Word 里只有一种编号定义。
 
+## MCP
+
+`document-render mcp` 在标准输入输出上跑一个 MCP server，给 Claude Desktop、Cursor 这类 AI 客户端用。只做 stdio，不做 HTTP。标准输出只走协议，警告放进工具结果里返回。
+
+四个工具，做的事跟同名命令一样：
+
+| 工具 | 参数 | 返回 |
+| --- | --- | --- |
+| `render` | `document`（必填）、`output`、`format`、`paged`、`style_set`、`style_sets`、`catalog`、`base_dir` | `path`（绝对路径）、`format`、`bytes`、`warnings` |
+| `check` | `document`（必填）、`catalog`、`style_sets`、`style_set`、`base_dir` | `ok`、`errors`、`warnings`、`elements`（展开后的元素个数） |
+| `list_components` | `catalog` | 组件名到说明的对象，跟 `catalog --json` 一样 |
+| `parse` | `input`（必填，docx 路径）、`output`、`assets` | 写了 `output` 时是 `path`；没写时 JSON 放在 `document` 里，另带 `base_dir`。都带 `assets`（图片目录和张数）、`warnings` |
+
+- `document` 写成 JSON 对象最好，写成 JSON 字符串也行。自定义组件可以放在文档的 `components` 里一起传。
+- `catalog`、`style_sets` 写一个路径或路径数组都行，跟命令行的 `--catalog`、`--style-sets` 一样。
+- `render` 按 `output` 的扩展名选格式，`format` 优先。`output` 所在目录不存在会自动建。
+- `render` 不写 `output` 时只能出 html 和 md，结果里的 `content` 就是文本。docx、pdf 必须写 `output`。
+- `base_dir` 相当于命令行里文档所在的目录：相对路径的图片按它找，它下面的 `catalog/`、`styles/` 自动读。不写时图片按 `output` 所在目录找，再没有就按 server 的当前目录找，`catalog/`、`styles/` 不自动读。
+- `parse` 不写 `output` 时，图片导到 docx 旁边的「文件名.assets/」，结果里的 `base_dir` 就是 docx 所在目录。再拿这份 JSON 去 render，把 `base_dir` 设成它，图片才找得到。
+- 相对路径按 server 的当前目录算（`render` 的 `output` 先按 `base_dir` 算）。客户端启动 server 时当前目录不一定是哪儿，所以最好都写绝对路径。
+- 出错时返回 `isError: true` 的工具结果，文字是中文错误信息，带出错的元素 id，server 不退出。`check` 发现文档有错不算工具出错，返回 `ok: false`。参数缺了或类型不对（比如少了 `document`）也返回 `isError`，这条错误信息是 MCP 库给的英文。
+
+### 客户端配置
+
+先确认 `document-render` 在 PATH 里（`which document-render`），配置里也可以直接写绝对路径。
+
+Claude Desktop（macOS 上是 `~/Library/Application Support/Claude/claude_desktop_config.json`）、Cursor（`~/.cursor/mcp.json` 或项目里的 `.cursor/mcp.json`）都是这样写：
+
+```json
+{
+  "mcpServers": {
+    "document-render": {
+      "command": "document-render",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Claude Code 用命令加：
+
+```sh
+claude mcp add document-render -- document-render mcp
+```
+
+VS Code（`.vscode/mcp.json`）：
+
+```json
+{
+  "servers": {
+    "document-render": {
+      "type": "stdio",
+      "command": "document-render",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Claude Desktop 从 Dock 启动时拿不到 shell 里的 PATH，找不到命令就把 `command` 写成绝对路径，比如 Homebrew 装的在 `/opt/homebrew/bin/document-render`（Intel Mac 是 `/usr/local/bin/document-render`）。
+
 ## 自定义组件
 
 自定义组件把内置组件组合起来，JSON 里像内置组件一样引用。渲染前先展开成内置组件，所以三个渲染器只认内置组件。
@@ -200,7 +261,7 @@ document-render parse report.docx -o out/report.json --assets img   # 图片导�
 | pdf | typst（当库用） | 0.15.1 |
 | xlsx（第二版） | rust_xlsxwriter | 0.101.0 |
 | pptx（第二版） | ppt-rs | 0.2.37 |
-| MCP | rmcp | 3.8.0 |
+| MCP | rmcp | 3.11.0（2026-11-20 核对） |
 | 命令行 | clap | 4.6.7 |
 | JSON Schema | schemars | 1.2.3 |
 | LaTeX 转 MathML | math-core | 0.9.0（2026-11-09 核对） |
