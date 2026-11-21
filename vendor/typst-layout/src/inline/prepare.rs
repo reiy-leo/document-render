@@ -4,6 +4,7 @@ use typst_library::text::TextElem;
 use unicode_bidi::{BidiInfo, Level as BidiLevel};
 
 use super::*;
+use crate::inline::shaping::{is_word_autospace_ea, is_word_autospace_latin, word_autospace};
 
 /// A representation in which children are already layouted and text is already
 /// preshaped.
@@ -144,29 +145,42 @@ fn add_cjk_latin_spacing(items: &mut [(Range, Item)]) {
         })
         .peekable();
 
+    // document-render patch: with `word_autospace()` on, the two sides of the
+    // gap are Word's character classes, and each gap can also stretch by 1/4 em.
+    let word = word_autospace();
+    let cj = |g: &ShapedGlyph| {
+        if word { is_word_autospace_ea(g.c) } else { g.is_cj_script() }
+    };
+    let latin = |g: &ShapedGlyph| {
+        if word { is_word_autospace_latin(g.c) } else { g.is_letter_or_number() }
+    };
+    let stretch = if word { Em::new(0.25) } else { Em::zero() };
+
     let mut prev: Option<(&mut ShapedGlyph, _)> = None;
     while let Some(mut item) = iter.next() {
         if let Some((glyph, shift)) = &mut item {
             // Case 1: CJ followed by a Latin character
-            if glyph.is_cj_script()
+            if cj(glyph)
                 && let Some(Some((next_glyph, next_shift))) = iter.peek()
-                && next_glyph.is_letter_or_number()
+                && latin(next_glyph)
                 && *shift == *next_shift
             {
                 // The spacing defaults to 1/4 em, and can be shrunk to 1/8 em.
                 glyph.x_advance += Em::new(0.25);
                 glyph.adjustability.shrinkability.1 += Em::new(0.125);
+                glyph.adjustability.stretchability.1 += stretch;
             }
 
             // Case 2: Latin followed by a CJ character
-            if glyph.is_cj_script()
+            if cj(glyph)
                 && let Some((prev_glyph, prev_shift)) = prev
-                && prev_glyph.is_letter_or_number()
+                && latin(prev_glyph)
                 && *shift == prev_shift
             {
                 glyph.x_advance += Em::new(0.25);
                 glyph.x_offset += Em::new(0.25);
                 glyph.adjustability.shrinkability.0 += Em::new(0.125);
+                glyph.adjustability.stretchability.0 += stretch;
                 prev_glyph.is_justifiable = true;
             }
         }

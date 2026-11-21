@@ -10,7 +10,9 @@ use typst_utils::Numeric;
 
 use super::*;
 use crate::inline::linebreak::Trim;
-use crate::inline::shaping::{Adjustability, cjk_punct_compression};
+use crate::inline::shaping::{
+    Adjustability, cjk_punct_compression, is_word_autospace_ea, word_autospace,
+};
 use crate::modifiers::layout_and_modify;
 
 const SHY: char = '\u{ad}';
@@ -344,14 +346,19 @@ fn collect_range<'a>(
 fn adjust_cj_at_line_boundaries(p: &Preparation, range: Range, items: &mut Items) {
     let text = &p.text[range];
 
+    // document-render patch: with `word_autospace()` on, Word's East Asian
+    // class decides which glyphs carry a CJK-Latin gap.
+    let cj: fn(char) -> bool =
+        if word_autospace() { is_word_autospace_ea } else { is_of_cj_script };
+
     if text.starts_with(BEGIN_PUNCT_PAT)
-        || (p.config.cjk_latin_spacing && text.starts_with(is_of_cj_script))
+        || (p.config.cjk_latin_spacing && text.starts_with(cj))
     {
         adjust_cj_at_line_start(p, items);
     }
 
     if text.ends_with(END_PUNCT_PAT)
-        || (p.config.cjk_latin_spacing && text.ends_with(is_of_cj_script))
+        || (p.config.cjk_latin_spacing && text.ends_with(cj))
     {
         adjust_cj_at_line_end(p, items);
     }
@@ -386,7 +393,7 @@ fn adjust_cj_at_line_start(p: &Preparation, items: &mut Items) {
         let shrink = glyph.shrinkability().0;
         glyph.shrink_left(shrink);
     } else if p.config.cjk_latin_spacing
-        && glyph.is_cj_script()
+        && (glyph.is_cj_script() || (word_autospace() && is_word_autospace_ea(glyph.c)))
         && glyph.x_offset > Em::zero()
     {
         // If the first glyph is a CJK character adjusted by
@@ -396,6 +403,10 @@ fn adjust_cj_at_line_start(p: &Preparation, items: &mut Items) {
         glyph.x_advance -= shrink;
         glyph.x_offset = Em::zero();
         glyph.adjustability.shrinkability.0 = Em::zero();
+        // document-render patch: the gap's stretch goes with it.
+        if word_autospace() {
+            glyph.adjustability.stretchability.0 = Em::zero();
+        }
     }
 }
 
@@ -415,6 +426,20 @@ fn adjust_cj_at_line_end(p: &Preparation, items: &mut Items) {
         let punct = shaped.glyphs.to_mut().last_mut().unwrap();
         punct.shrink_right(shrink);
     } else if p.config.cjk_latin_spacing
+        && word_autospace()
+        && is_word_autospace_ea(glyph.c)
+        && glyph.stretchability().1 > Em::zero()
+    {
+        // document-render patch: with `word_autospace()` on, a right-side gap
+        // is exactly 1/4 em and is marked by its stretch (glyphs such as
+        // half-width kana are narrower than 1 em, so the width test below
+        // would miss them).
+        let glyph = shaped.glyphs.to_mut().last_mut().unwrap();
+        glyph.x_advance -= Em::new(0.25);
+        glyph.adjustability.shrinkability.1 = Em::zero();
+        glyph.adjustability.stretchability.1 = Em::zero();
+    } else if p.config.cjk_latin_spacing
+        && !word_autospace()
         && glyph.is_cj_script()
         && (glyph.x_advance - glyph.x_offset) > Em::one()
     {

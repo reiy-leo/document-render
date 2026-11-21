@@ -16,6 +16,9 @@ use typst_utils::Scalar;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::*;
+use crate::inline::shaping::{
+    END_PUNCT_PAT, ShapedGlyph, is_word_autospace_ea, word_autospace,
+};
 
 /// The cost of a line or inline layout.
 type Cost = f64;
@@ -173,6 +176,18 @@ fn linebreak_simple<'a>(
     let mut start = 0;
     let mut last = None;
 
+    // document-render patch: with `word_autospace()` on, a justified line
+    // counts as fitting when squeezing its CJK-Latin gaps the way Word does
+    // makes it fit.
+    let fits = |l: &Line| {
+        let squeeze = if word_autospace() && p.config.justify {
+            word_autospace_allowance(l)
+        } else {
+            Abs::zero()
+        };
+        width.fits(l.width - squeeze)
+    };
+
     breakpoints(p, |end, breakpoint| {
         // Compute the line and its size.
         let mut attempt = line(engine, p, start..end, breakpoint, lines.last());
@@ -180,7 +195,7 @@ fn linebreak_simple<'a>(
         // If the line doesn't fit anymore, we push the last fitting attempt
         // into the stack and rebuild the line from the attempt's end. The
         // resulting line cannot be broken up further.
-        if !width.fits(attempt.width)
+        if !fits(&attempt)
             && let Some((last_attempt, last_end)) = last.take()
         {
             lines.push(last_attempt);
@@ -191,7 +206,7 @@ fn linebreak_simple<'a>(
         // Finish the current line if there is a mandatory line break (i.e. due
         // to "\n") or if the line doesn't fit horizontally already since then
         // no shorter line will be possible.
-        if breakpoint == Breakpoint::Mandatory || !width.fits(attempt.width) {
+        if breakpoint == Breakpoint::Mandatory || !fits(&attempt) {
             lines.push(attempt);
             start = end;
             last = None;
@@ -205,6 +220,71 @@ fn linebreak_simple<'a>(
     }
 
     lines
+}
+
+/// document-render patch: how much a justified line may shrink its CJK-Latin
+/// gaps to take one more character, following Word 2024.
+///
+/// Word squeezes each gap to no less than 1/8 em, but how far it goes depends
+/// on the line (measured with SimSun and Microsoft YaHei at 10.5 and 12 pt,
+/// in em of the font size, n = number of gaps on the line):
+///
+/// - The line ends with a character that cannot start a line (`，` `。`
+///   `）` ...): every gap down to 1/8 em, i.e. n/8 em in total.
+/// - The last character directly follows a gap (`…上5跑`, `…上5`):
+///   at most 1/4 em in total.
+/// - Otherwise: 1/8 em for one gap, about 0.195 em for two, and about
+///   (n - 1) / 3n + 0.01 em for three or more (0.26 em for four, 0.30 em for
+///   eight, approaching 1/3 em).
+///
+/// These are measured limits, not a documented rule; see `PATCH.md`.
+fn word_autospace_allowance(line: &Line) -> Abs {
+    let glyphs: Vec<&ShapedGlyph> = line
+        .items
+        .iter()
+        .filter_map(Item::text)
+        .flat_map(|s| s.glyphs.iter())
+        .filter(|g| !g.c.is_whitespace())
+        .collect();
+    let mut gaps = 0usize;
+    let mut total = Abs::zero();
+    for g in glyphs.iter().filter(|g| is_word_autospace_ea(g.c)) {
+        for side in [g.shrinkability().0, g.shrinkability().1] {
+            if side > Em::zero() {
+                gaps += 1;
+                total += side.at(g.size);
+            }
+        }
+    }
+    if gaps == 0 {
+        return Abs::zero();
+    }
+    let per_gap = total / gaps as f64;
+    let last = glyphs.last();
+    let cannot_start = last
+        .is_some_and(|g| END_PUNCT_PAT.contains(&g.c) || ",.:;!?)]}%".contains(g.c));
+    // Is there a gap right before the last glyph? It sits either on the left
+    // of the last glyph or on the right of the one before it.
+    let after_gap = last.is_some_and(|g| {
+        is_word_autospace_ea(g.c) && g.shrinkability().0 > Em::zero()
+    }) || (glyphs.len() >= 2 && {
+        let b = glyphs[glyphs.len() - 2];
+        is_word_autospace_ea(b.c) && b.shrinkability().1 > Em::zero()
+    });
+    // Allowances in units of one gap's full squeeze (1/8 em).
+    let n = gaps as f64;
+    let units = if cannot_start {
+        n
+    } else if after_gap {
+        n.min(2.0)
+    } else {
+        match gaps {
+            1 => 1.0,
+            2 => 0.195 * 8.0,
+            _ => ((n - 1.0) / (3.0 * n) + 0.01) * 8.0,
+        }
+    };
+    (per_gap * units).min(total)
 }
 
 /// Performs line breaking in optimized Knuth-Plass style. Here, we use more

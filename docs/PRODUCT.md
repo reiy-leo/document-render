@@ -83,7 +83,7 @@ document-render 把一份 JSON 文档渲染成 docx、pdf、html，也能出 Mar
 pdf 用 Typst 排版，有这些不同：
 
 - 中文用系统字体：macOS 上是苹方，Linux 上是 Noto Sans CJK。默认中文字体一个都没有、或者文档写的字体本机没装（回退列表一个都没装），都会报错；加 `--allow-missing-fonts` 才退回默认字体照常出，中文可能显示不全。
-- 中文断行跟 Word 默认设置走：逐行能放就放，标点不压缩、不悬挂（docx 里也写明这两项）。为此带了一份打过补丁的 typst-layout，见技术选型。两端对齐的段落字距可能不如 Typst 原来匀。细节见 STYLE.md「中文断行」。
+- 中文断行跟 Word 默认设置走：逐行能放就放，标点不压缩、不悬挂（docx 里也写明这两项），中西文间距加在哪、怎么伸缩也照 Word。为此带了一份打过补丁的 typst-layout，见技术选型。两端对齐的段落字距可能不如 Typst 原来匀。细节见 STYLE.md「中文断行」。
 - 中文字体没有斜体，`italic` 对中文不起作用。
 - 支持 SVG；远程图片暂不支持，改成显示 alt 文字。
 - 颜色只认十六进制写法，比如 `#c00`、`#1a73e8`。
@@ -278,7 +278,7 @@ Claude Desktop 从 Dock 启动时拿不到 shell 里的 PATH，找不到命令�
 | 读 MathML | roxmltree | 0.21 |
 
 - PDF 走 Typst：先把文档转成 Typst 源码，再编译成 PDF。中文排版好，不用装 LibreOffice。字体要打包进二进制，或者读系统字体。
-- typst-layout 用的是补丁版（`vendor/typst-layout`，Cargo.toml 里 `[patch.crates-io]` 指过去）：加了一个关掉中文标点挤压的开关，好让 pdf 断行和 Word 一致（Rei 2026-11-22 定）。升级 Typst 时要把补丁照着再打一遍，改了哪几处见那个目录里的 `PATCH.md`。
+- typst-layout 用的是补丁版（`vendor/typst-layout`，Cargo.toml 里 `[patch.crates-io]` 指过去）：加了两个开关：关掉中文标点挤压，中西文间距改用 Word 的规则，好让 pdf 断行和 Word 一致（Rei 2026-11-22 定）。升级 Typst 时要把补丁照着再打一遍，改了哪几处见那个目录里的 `PATCH.md`。
 - HTML 自己拼字符串，不引模板引擎。
 - 公式只用一个解析器：math-core（MIT）把 LaTeX 转成 MathML，html 直接用；docx 和 pdf 再从 MathML 转成 OMML 和 Typst 公式，这两步是自己写的。没用 mitex（LaTeX 转 Typst）：它转出来的东西要配 mitex 的 Typst 包才能排，离线用不了，而且 2024 年以后没再更新。
 - 只支持 JSON，不支持 YAML（Rei 2026-10-28 定）：AI 生成 JSON 最稳，也少一个依赖。

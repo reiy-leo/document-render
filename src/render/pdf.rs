@@ -79,6 +79,8 @@ pub fn layout(
     // 中文标点不压缩（打过补丁的 typst-layout 的开关，见 vendor/typst-layout/PATCH.md），
     // 和 Word 默认的「不压缩」一致
     typst_layout::set_cjk_punct_compression(false);
+    // 中西文自动间距照 Word：哪些字加间距、两端对齐时先拉这些间距、为多放一个字可以压（同一补丁）
+    typst_layout::set_word_autospace(true);
     let mut world = DocumentRenderWorld::new(source.clone(), m.files);
     let mut warned = typst::compile::<PagedDocument>(&world);
     // 公式转出来的 Typst 源码万一排不了，整份文档的公式都改成显示 LaTeX 原文再排一次，不让整个 PDF 失败

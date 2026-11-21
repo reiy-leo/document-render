@@ -40,12 +40,18 @@ fn collect(frame: &Frame, at: Point, out: &mut Vec<(f64, f64, char, f64)>) {
 
 /// 一份只有一个段落的文档排成 pdf 后的各行（只看第一页）。
 fn lines(text: &str, align: &str) -> Vec<Line> {
+    lines_with(text, align, 0.0, true)
+}
+
+/// 同 `lines`，段落右缩进 `margin_right` pt，`auto_space` 是中西文自动间距开关。
+fn lines_with(text: &str, align: &str, margin_right: f64, auto_space: bool) -> Vec<Line> {
     let json = serde_json::json!({
         "root": "d",
         "elements": {
             "d": {"type": "Document", "children": ["p"]},
             "p": {"type": "Text", "props": {"text": text},
-                  "style": {"fontSize": 10, "align": align}}
+                  "style": {"fontSize": 10, "align": align, "marginRight": margin_right,
+                            "autoSpace": auto_space}}
         }
     })
     .to_string();
@@ -179,4 +185,104 @@ fn docx_turns_off_compression_and_hanging_punctuation() {
     // 用 roxmltree 确认两个部件还是合法的 XML
     roxmltree::Document::parse(&settings).unwrap();
     roxmltree::Document::parse(&styles).unwrap();
+}
+
+/// 一行里字符 `a` 紧接着 `b` 时，`b` 的 x 减 `a` 的 x（pt）。
+fn step(l: &Line, a: char, b: char) -> f64 {
+    l.chars
+        .windows(2)
+        .find(|w| w[0].0 == a && w[1].0 == b)
+        .map(|w| w[1].1 - w[0].1)
+        .unwrap_or_else(|| panic!("找不到「{a}{b}」"))
+}
+
+/// 中西文自动间距加在哪些字旁边，跟 Word 2024 实测一致：
+/// 汉字和 ASCII 数字、拉丁/希腊/西里尔字母之间加 1/4 字（10pt 时 2.5pt）；
+/// 「%」「$」「°」、全角字母、「〇」旁边都不加（Typst 原来在 % $ # & 旁边也加）。
+#[test]
+fn cjk_latin_spacing_follows_word() {
+    let text = "增长18.7%其中价格$5元温度30°C左右ＡＢ全角〇5号α粒子";
+    let on = &lines_with(text, "left", 0.0, true)[0];
+    let off = &lines_with(text, "left", 0.0, false)[0];
+    // 开关间距前后同一对字的距离差，就是加的间距
+    let added = |a, b| step(on, a, b) - step(off, a, b);
+    for (a, b) in [
+        ('长', '1'),
+        ('5', '元'),
+        ('C', '左'),
+        ('5', '号'),
+        ('α', '粒'),
+    ] {
+        let g = added(a, b);
+        assert!(
+            (g - 2.5).abs() < 0.01,
+            "「{a}{b}」加了 {g:.2}pt，应是 2.5pt"
+        );
+    }
+    for (a, b) in [
+        ('%', '其'),
+        ('格', '$'),
+        ('0', '°'),
+        ('Ｂ', '全'),
+        ('〇', '5'),
+    ] {
+        let g = added(a, b);
+        assert!(g.abs() < 0.01, "「{a}{b}」加了 {g:.2}pt，应是 0");
+    }
+}
+
+/// 一行汉字中间夹一个数字（两处中西文间距），算出右缩进让这一行自然宽度正好超出 `over` pt。
+/// 返回（文字，右缩进，第一行候选的字数，数字的字宽）。
+fn squeeze_case(over: f64) -> (String, f64, usize, f64) {
+    // 版心宽：两端对齐的纯汉字第一行从第一个字左边到最后一个字右边
+    let full = lines(&"汉".repeat(200), "justify");
+    let f = &full[0].chars;
+    let width = f.last().unwrap().1 + f.last().unwrap().2 - f[0].1;
+    // 数字自己的宽度（关掉自动间距量）
+    let probe = &lines_with("汉5汉", "left", 0.0, false)[0];
+    let w5 = probe.chars[2].1 - probe.chars[1].1;
+    // 候选第一行：10 个汉字 + 「5」+ k 个汉字，自然宽度 = (10 + k) × 10 + w5 + 两处 2.5
+    // 取放得下的最大 k，再用右缩进把可用宽度缩到比自然宽度少 `over`
+    let k = ((width - w5 - 5.0) / 10.0).floor() as usize - 10;
+    let natural = (10 + k) as f64 * 10.0 + w5 + 5.0;
+    let margin = width - natural + over;
+    assert!(margin >= 0.0, "右缩进 {margin}");
+    let text = format!("{}5{}{}", "汉".repeat(10), "字".repeat(k), "后".repeat(40));
+    (text, margin, 11 + k, w5)
+}
+
+/// 两端对齐时，为了多放一个字 Word 会压中西文间距；左对齐不压。
+/// 两处间距的行最多压约 0.195 字（10pt 时 1.95pt），每处不少于 1/8 字。
+/// 放不下时这一行要拉开：中西文间距先拉（最多各加 1/4 字），剩下的才分给汉字之间。
+#[test]
+fn justified_line_squeezes_cjk_latin_spacing_to_fit() {
+    let (text, margin, n, w5) = squeeze_case(1.0);
+    let left = lines_with(&text, "left", margin, true);
+    assert_eq!(left[0].chars.len(), n - 1, "左对齐不压，第一行少一个字");
+    let just = lines_with(&text, "justify", margin, true);
+    let l = &just[0];
+    assert_eq!(l.chars.len(), n, "两端对齐压间距，第一行多放一个字");
+    for (a, b, w) in [('汉', '5', 10.0), ('5', '字', w5)] {
+        let g = step(l, a, b) - w;
+        assert!(
+            (1.25..2.5).contains(&g),
+            "「{a}{b}」间距 {g:.2}pt，应压到 1.25～2.5pt 之间"
+        );
+    }
+    // 汉字之间不压
+    let g = step(l, '字', '字') - 10.0;
+    assert!(g.abs() < 0.01, "汉字之间 {g:.2}pt");
+
+    // 超出 2.2pt：照 Typst 原来「每处可压到 1/8 字」能放下（共 2.5pt），Word 不压这么多
+    let (text, margin, n, w5) = squeeze_case(2.2);
+    let just = lines_with(&text, "justify", margin, true);
+    let l = &just[0];
+    assert_eq!(l.chars.len(), n - 1, "超出太多，不压，少放一个字");
+    // 这一行要拉开 7.8pt：两处间距先各拉到 5pt，剩下 2.8pt 才分给汉字之间
+    for (a, b, w) in [('汉', '5', 10.0), ('5', '字', w5)] {
+        let g = step(l, a, b) - w;
+        assert!(g >= 4.99, "「{a}{b}」间距 {g:.2}pt，应先拉到 5pt");
+    }
+    let g = step(l, '字', '字') - 10.0;
+    assert!(g > 0.0 && g < 0.2, "汉字之间只分到剩下的一点：{g:.2}pt");
 }

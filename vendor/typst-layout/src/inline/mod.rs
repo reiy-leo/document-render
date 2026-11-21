@@ -11,6 +11,7 @@ mod shaping;
 pub use self::box_::layout_box;
 pub use self::shaping::{
     SharedShapingContext, create_shape_plan, get_font_and_covers, set_cjk_punct_compression,
+    set_word_autospace,
 };
 
 use comemo::{Track, Tracked, TrackedMut};

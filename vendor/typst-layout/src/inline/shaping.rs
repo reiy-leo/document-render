@@ -1427,6 +1427,63 @@ pub(crate) fn cjk_punct_compression() -> bool {
     CJK_PUNCT_COMPRESSION.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+// document-render patch: switch for Word-style CJK-Latin spacing.
+static WORD_AUTOSPACE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// document-render patch: follow Microsoft Word's automatic spacing between
+/// East Asian and Latin text (`w:autoSpaceDE` / `w:autoSpaceDN`).
+///
+/// Off (the default) is upstream behaviour. On changes `cjk-latin-spacing`
+/// in three ways, all measured against Word 2024:
+///
+/// - Which characters get the 1/4 em gap: see [`is_word_autospace_ea`] and
+///   [`is_word_autospace_latin`] (no gap next to `%`, `$`, `#`, `&`).
+/// - Each gap may stretch by another 1/4 em when a line is justified, and
+///   these gaps are stretched before the inter-character space.
+/// - A justified line may squeeze its gaps to fit one more character
+///   (see `word_autospace_allowance` in `linebreak.rs`).
+///
+/// Call it once before laying out anything; layout results are memoized.
+pub fn set_word_autospace(on: bool) {
+    WORD_AUTOSPACE.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// document-render patch: whether Word-style CJK-Latin spacing is on.
+pub(crate) fn word_autospace() -> bool {
+    WORD_AUTOSPACE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// document-render patch: the East Asian side of Word's automatic spacing.
+///
+/// Word 2024 puts the gap next to ideographs, kana (also half-width) and
+/// Hangul, but not next to `々`, `〇`, `ー`, CJK punctuation or circled
+/// numbers.
+pub(crate) fn is_word_autospace_ea(c: char) -> bool {
+    if ('\u{3000}'..='\u{303F}').contains(&c) {
+        return false;
+    }
+    matches!(c.script(), Script::Han | Script::Hiragana | Script::Katakana | Script::Hangul)
+}
+
+/// document-render patch: the Latin side of Word's automatic spacing.
+///
+/// Word 2024 puts the gap next to ASCII digits and next to letters of the
+/// Latin, Greek and Cyrillic scripts (including `é` and `µ`), but not next to
+/// any punctuation or symbol (`%`, `$`, `°`, `‰`, `€` ...), full-width forms
+/// or Roman numerals.
+pub(crate) fn is_word_autospace_latin(c: char) -> bool {
+    if c.is_ascii_digit() || c == 'µ' {
+        return true;
+    }
+    if ('\u{FF00}'..='\u{FFEF}').contains(&c) || ('\u{2150}'..='\u{218F}').contains(&c)
+    {
+        return false;
+    }
+    c.is_alphabetic()
+        && matches!(c.script(), Script::Latin | Script::Greek | Script::Cyrillic)
+}
+
 pub fn cjk_punct_style(lang: Lang, region: Option<Region>) -> CjkPunctStyle {
     match (lang, region.as_ref().map(Region::as_str)) {
         (Lang::CHINESE, Some("TW" | "HK")) => CjkPunctStyle::Cns,
