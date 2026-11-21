@@ -187,8 +187,20 @@ run 对象的字段见 3.17。
 |---|---|---|---|---|
 | `ordered` | 布尔 | 否 | `false` | 有序带编号 |
 | `items` | 数组 | 是 | — | 每项是 inline，或 `{ "text": inline, "items": [子项], "ordered": 布尔 }` |
+| `continueFrom` | 字符串 | 否 | 无 | 接着前面哪个 List 编号，写它的元素 id |
 
-子项对象只认 `text`、`items`、`ordered`；`ordered` 不写跟上一级一样。
+子项对象只认 `text`、`items`、`ordered`；`ordered` 不写跟上一级一样。同一级里可以有的子列表有序、有的无序，各显示各的，有序的都从 1 起。
+
+**接着编号（`continueFrom`）**：两段列表中间隔着正文、表格时，后一段写 `"continueFrom": "前一段的id"`，第一级从前一段最后一项之后接着数（前一段数到 3，这段从 4 起）。只数第一级：子级在新的第一级项下照常从 1 起。可以链着接（C 接 B，B 接 A）。规则：
+
+- 被接的必须是 List，而且在文档里出现在它前面，否则 check 报错。
+- 不能再写 `listStart`（第一级起始号由前一段算出），一起写会报错。
+- 页眉页脚里的列表不能用。
+- docx 里第一级编号定义和前一段一样时共用一个编号，Word 里插项会自动重排；不一样时（比如这段换成罗马数字）各用各的定义，起始号写死。
+
+```json
+"steps2": { "type": "List", "props": { "ordered": true, "continueFrom": "steps", "items": ["检查输出", "发出去"] } }
+```
 
 每一级的样式按「元素 `style` + `parts.levelN`」算，规则是：
 
@@ -524,7 +536,14 @@ run 对象字段（多写会报错）：
 | `listMarkerGap` | 长度，或 `tab` `space` `none` | 编号和正文之间 |
 | `listIndent` | 长度 | 每级缩进，逐级累加，默认 `2em` |
 | `listHanging` | 长度 | 编号区宽度，默认 `2em` |
-| `listStart` | 整数 | 起始编号，不继承；写在元素 `style` 上只管第一级 |
+| `listStart` | 整数 | 起始编号，不继承；写在元素 `style` 上只管第一级；和 `continueFrom` 不能一起用 |
+| `itemSpacing` | 长度 | 相邻两项之间的距离，不管整个列表的 `spaceBefore`/`spaceAfter`；可以按级写在 `parts.levelN` 上 |
+
+`itemSpacing` 的规则：相邻两项之间用两项里级别深的那一级的值，所以父项和它的第一个子项之间、最后一个子项和下一个父项之间都按子列表那一级算。没写时项与项之间按 `parts.item` 的 `spaceBefore`/`spaceAfter` 取大的。写了就不管 `parts.item` 的段前段后，也不受 `contextualSpacing` 影响。md 里没有间距，忽略。
+
+```json
+"style": { "itemSpacing": 6 }, "parts": { "level2": { "itemSpacing": 2 } }
+```
 
 注意：不在名单里、又不超过 3 个字符的字符串会被当成项目符号（写 `"abc"` 就显示 abc）。
 
@@ -881,6 +900,9 @@ prop `type`：`string`（默认）`number` `integer` `boolean` `array` `object` 
 | 封面节写 `"first": null`，正文节只写 `"header": "hdr"` | 正文首页没有页眉（`first` 沿用了） | 正文节写 `{ "default": "hdr", "first": "hdr" }` |
 | 表格写了 `parts.lastRow`/`lastColumn` 但没开 `look` | 不报错，样式不生效 | `"look": { "lastRow": true }` |
 | 想让各级都用同一种编号，只在 List 的 `style` 上写 `listStyleType` | 只有第一级变，下级还是默认的 a. b. 或圆点 | 每级写进 `parts.levelN` |
+| 隔开的第二段列表想接着编号，写了 `"listStart": 4` | 第一段增删项后对不上，Word 里也不联动 | `"continueFrom": "第一段的id"` |
+| `continueFrom` 指向后面的列表，或同时写 `listStart` | 报错 | 只指向前面的 List，去掉 `listStart` |
+| 想调列表项之间的距离，在 List 的 `style` 上写 `spaceBefore` | 只改整个列表前面的距离 | `itemSpacing` |
 | 二级的 `listMarkerFormat` 写成 `"%1."` | 二级每项都显示一级的编号（`%1` 是第一级） | 写 `"%2."` 或 `"%1.%2"` |
 | 长度写 `"2字符"`、`"10 pt"` 以外的怪单位 | 报错 | 单位只认 `pt mm cm in px em line %` |
 | `listStyleType: "roman"` | 报错；而 `"abc"`（≤3 字符）会被当成符号 | `"lower-roman"` |

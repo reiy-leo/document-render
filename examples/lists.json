@@ -1,0 +1,57 @@
+{
+  "version": "0.1",
+  "meta": { "title": "列表：接着编号、同级混用、项间距", "lang": "zh-CN", "page": { "size": "A4", "margin": "20mm" } },
+  "root": "doc",
+  "elements": {
+    "doc": {
+      "type": "Document",
+      "children": ["h1", "a", "gap1", "b", "gap2", "c", "h2", "mixed", "h3", "legal", "h4", "spaced", "after"]
+    },
+    "h1": { "type": "Heading", "props": { "level": 2, "text": "接着编号（continueFrom）" } },
+    "a": {
+      "type": "List",
+      "props": { "ordered": true, "items": ["A 第一项", { "text": "A 第二项", "items": ["子项甲", "子项乙"] }, "A 第三项"] }
+    },
+    "gap1": { "type": "Text", "props": { "text": "中间隔一段正文，下面的列表接着上面编号。" } },
+    "b": { "type": "List", "props": { "ordered": true, "continueFrom": "a", "items": ["B 应为 4", "B 应为 5"] } },
+    "gap2": { "type": "Text", "props": { "text": "再隔一段，C 接 B（链式）。" } },
+    "c": { "type": "List", "props": { "ordered": true, "continueFrom": "b", "items": ["C 应为 6"] } },
+    "h2": { "type": "Heading", "props": { "level": 2, "text": "同一级混用有序、无序" } },
+    "mixed": {
+      "type": "List",
+      "props": {
+        "ordered": true,
+        "items": [
+          { "text": "第一项：有序子列表", "items": ["应为 a", "应为 b"] },
+          { "text": "第二项：无序子列表", "ordered": false, "items": ["圆圈", "圆圈"] },
+          { "text": "第三项：有序子列表，从 a 起", "items": ["应为 a", "应为 b", "应为 c"] },
+          "第四项"
+        ]
+      }
+    },
+    "h3": { "type": "Heading", "props": { "level": 2, "text": "先无序后有序，子级模板带上级编号" } },
+    "legal": {
+      "type": "List",
+      "props": {
+        "ordered": true,
+        "items": [
+          { "text": "一级 1", "ordered": false, "items": ["圆圈"] },
+          { "text": "一级 2", "ordered": true, "items": ["应为 2.a", "应为 2.b"] },
+          { "text": "一级 3", "items": ["应为 3.a"] }
+        ]
+      },
+      "parts": { "level2": { "listMarkerFormat": "%1.%2" } }
+    },
+    "h4": { "type": "Heading", "props": { "level": 2, "text": "项间距（itemSpacing）" } },
+    "spaced": {
+      "type": "List",
+      "props": {
+        "ordered": true,
+        "items": ["Item one", { "text": "Item two", "items": ["Sub one", "Sub two"] }, "Item three", "Item four"]
+      },
+      "style": { "itemSpacing": 12, "lineHeight": "16pt", "spaceBefore": 6, "spaceAfter": 6 },
+      "parts": { "level2": { "itemSpacing": 4 } }
+    },
+    "after": { "type": "Text", "props": { "text": "一级项之间 12pt，子列表那几处 4pt。" } }
+  }
+}

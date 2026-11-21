@@ -229,7 +229,8 @@ Word 的列表定义在 numbering.xml：`w:abstractNum` 下每一级一个 `w:lv
 | `listMarkerGap` | 编号和正文之间：长度，或 `tab` `space` `none` | w:suff + 制表位 | indent 和 marL 的差 | ::marker padding / gap | body-indent |
 | `listIndent` | 每一级缩进多少（正文左边到哪） | w:ind left | marL（逐级） | padding-left | indent |
 | `listHanging` | 编号区宽度，就是悬挂缩进 | w:ind hanging | indent（负数） | 负 text-indent | 用 body-indent 近似 |
-| `listStart` | 有序列表从几开始 | w:start | buAutoNum startAt | start 属性 | enum start |
+| `listStart` | 有序列表从几开始；和 List 的 `continueFrom` 不能一起写 | w:start | buAutoNum startAt | start 属性 | enum start |
+| `itemSpacing` | 长度：相邻两项之间的距离，可以按级写在 `levelN` 上 | 下一项 w:spacing before，上一项 after 写 0 | a:spcBef | 下一项 margin-top，上一项 margin-bottom 0 | 下一项 block above |
 
 多级列表：List 的 props 里 items 可以嵌套，每一级的样式是「元素样式 + `levelN` 部位」。`levelN` 可以写在元素的 `parts` 里，也可以写成 `List.level2` 这样的组件样式键（见第十一节）。`listIndent` 每级自动累加。
 
@@ -243,7 +244,28 @@ Word 的列表定义在 numbering.xml：`w:abstractNum` 下每一级一个 `w:lv
 
 符号级别（`disc` `circle` `square` `dash` `none` 或自定字符）只显示符号，`listMarkerFormat` 写了也不用。Word 的 lvlText 在符号级别就是符号本身。
 
-Word 里一个列表的每一级只有一份定义。同一级下，有的子列表有序、有的无序时，docx 按这一级第一次出现的子列表写，html 和 pdf 各按各的。
+同一级下可以有的子列表有序、有的无序，四种格式都各显示各的类型，有序子列表都从 1 起。docx 的写法：每个列表一个 abstractNum，每一级的定义取这一级第一次出现的子列表；后面哪串子列表的定义和它不一样，就给这串单开一个 w:num，指向同一个 abstractNum，用 w:lvlOverride 换掉这一级的 w:lvl，加 w:startOverride 从头数。上几级还是同一个 abstractNum，父级编号照常连续。
+
+### 项间距（`itemSpacing`）
+
+`itemSpacing` 管相邻两项之间的距离，不管整个列表的 `spaceBefore`（第一项上面）和 `spaceAfter`（最后一项下面）。它跟别的列表字段一样会继承，元素样式上写一个就管所有级别，`levelN` 上写的只管那一级。
+
+- 相邻两项之间用两项里级别深的那一级的值。父项和它的第一个子项之间、最后一个子项和下一个父项之间，都按子列表那一级算。
+- 写了 `itemSpacing` 的地方不用 `item` 部位的 `spaceBefore`/`spaceAfter`。没写时照旧：项与项之间是 `item` 部位的段后和段前里大的（和 Word 一样）。
+- docx：距离写在下一项的 w:spacing before 上，上一项的 after 写 0。Word 段前段后取大的，这样不会叠加，Word 里量出来正好是 `itemSpacing`。document-render 不写 w:contextualSpacing，不会把项间距吃掉。
+- pdf：下一项的 block above。html：下一项 margin-top，上一项 margin-bottom 写 0。
+- md：没有间距，忽略。
+- parse：同一列表里每一级的项间距都一致时读回成 `itemSpacing`（最浅那一级写在元素上，别的级不一样才写进 `levelN`）；不一致时照旧读成 `item` 部位的段前段后。
+
+### 接着编号（List 的 `continueFrom`）
+
+两段列表中间隔着正文时，后一段的 props 写 `"continueFrom": "前一段的id"`，第一级从前一段最后一项之后接着数。前一段的起始号算在内（前一段 `listStart: 3`、三项，这段从 6 起）。只接第一级，子级跟 Word 一样在新的第一级项下从头数。可以链着接。
+
+- 被接的必须是 List，而且在正文里出现在它前面；不存在、不是 List、在后面（包括指向自己）都会报错。页眉页脚里的列表不能用。
+- 和 `listStart` 不能一起写（第一级的 `listStart` 不管写在元素、`level1` 还是组件样式上），一起写报错。
+- docx：第一级定义和被接的列表一样时直接用它的 w:num，Word 里是同一个列表，真正接着数；不一样时（比如这段换成罗马数字）单开 abstractNum，第一级 w:start 写算好的号，数字对，但 Word 里不联动。
+- pdf、html：算好起始号，直接写编号文字。md：写算好的数字。
+- parse：正文里不挨着的两组段落用同一个 numId（或者同一个 abstractNum、后一个 num 第一级没写 startOverride）时，后一组读成带 `continueFrom` 的 List。
 
 ## 八、图片位置（对应 wp:inline / wp:anchor、p:pic 的 a:xfrm、xlsx 的 xdr anchor）
 
