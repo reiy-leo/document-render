@@ -291,6 +291,29 @@ impl Sheet {
         self.comp.get(key)
     }
 
+    /// 标题编号定义：每级把 `Heading`、`Heading.N` 组件样式叠起来，
+    /// 写了 listStyleType（不是 none）或 listMarkerFormat 的级别算开了编号。
+    pub fn heading_numbering(&self) -> crate::doc::HeadingNumbering {
+        let mut hn = crate::doc::HeadingNumbering::default();
+        for l in 1..=6u8 {
+            let mut s = Style::default();
+            for k in ["Heading".to_string(), format!("Heading.{l}")] {
+                if let Some(c) = self.comp(&k) {
+                    s.merge(c);
+                }
+            }
+            let on = match &s.list_style_type {
+                Some(style::ListStyleType::None) => false,
+                Some(_) => true,
+                None => s.list_marker_format.is_some(),
+            };
+            if on {
+                hn.levels[l as usize - 1] = Some(s);
+            }
+        }
+        hn
+    }
+
     /// 解析 `style` 的值：样式名、样式名数组或样式对象。
     pub fn resolve(&self, v: &Value) -> Result<Style> {
         let v = &self.subst(v)?;

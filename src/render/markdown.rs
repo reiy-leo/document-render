@@ -93,7 +93,11 @@ impl Md<'_> {
             }
             Component::Heading(p) => {
                 let level = p.level.clamp(1, 6) as usize;
-                let text = self.inline(&p.text, &n.style, &n.id).replace('\n', " ");
+                let mut text = self.inline(&p.text, &n.style, &n.id).replace('\n', " ");
+                if let Some(no) = &p.number {
+                    let hn = common::heading_numbering(self.root);
+                    text = format!("{no}{}{}", common::heading_sep(hn, p.level), text.trim());
+                }
                 let mut b = String::new();
                 if self.anchors.contains(&n.id) {
                     let _ = writeln!(b, "<a id=\"{}\"></a>", attr(&n.id));

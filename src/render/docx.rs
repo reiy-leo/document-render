@@ -51,16 +51,6 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> anyhow::Result<Output> 
         }))
         .default_size((root.size_pt() * 2.0).round() as usize);
     let _ = doc;
-    for lvl in 1..=6 {
-        docx = docx.add_style(
-            Style::new(format!("Heading{lvl}"), StyleType::Paragraph)
-                .name(format!("heading {lvl}"))
-                .based_on("Normal")
-                .next("Normal")
-                .q_format(true)
-                .outline_lvl(lvl - 1),
-        );
-    }
     docx = docx
         .add_style(
             Style::new("Code", StyleType::Paragraph)
@@ -111,8 +101,33 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> anyhow::Result<Output> 
         root: tree.clone(),
         maths: Vec::new(),
         alts: BTreeMap::new(),
+        heading_numbering: common::heading_numbering(tree).cloned(),
+        heading_nums: BTreeMap::new(),
+        heading_abs: None,
     };
     r.node(tree);
+    // 标题样式。开了编号的级别在样式里写 w:numPr（指向标题编号的 num），
+    // 编号定义的各级用 w:pStyle 绑回标题样式，和 Word 的「多级列表链接到标题样式」一样：
+    // 在 Word 里增删标题会自动重排，导航窗格和目录里也有编号
+    let heading_main = r.heading_main_num();
+    for lvl in 1..=6usize {
+        let mut st = Style::new(format!("Heading{lvl}"), StyleType::Paragraph)
+            .name(format!("heading {lvl}"))
+            .based_on("Normal")
+            .next("Normal")
+            .q_format(true)
+            .outline_lvl(lvl - 1);
+        if let Some(num) = heading_main
+            && r.heading_numbering
+                .as_ref()
+                .is_some_and(|h| h.level(lvl as u8).is_some())
+        {
+            st.paragraph_property = st
+                .paragraph_property
+                .numbering(NumberingId::new(num), IndentLevel::new(lvl - 1));
+        }
+        docx = docx.add_style(st);
+    }
     let sections = std::mem::take(&mut r.sections);
     // 只要有一节写了页眉页脚，每节都把三种引用写全（没有的写空的），
     // 不然 Word 会把缺的那种接到上一节
@@ -254,6 +269,7 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> anyhow::Result<Output> 
         *h = fix_doc_pr(h, &mut r.alts, &mut pic_no, &|rid| key_of(&hf_rels, rid));
     }
     xml.document = fix_ind_chars(&xml.document, &r.ind_chars);
+    xml.document = fix_ppr_rpr(&xml.document);
     for h in xml.headers.iter_mut().chain(xml.footers.iter_mut()) {
         *h = mark_behind(h);
         *h = fix_ind_chars(h, &r.ind_chars);
@@ -960,6 +976,12 @@ struct Ctx<'a> {
     /// 图片的替代文字，生成 XML 后写进 wp:docPr。docx-rs 会把内容相同的图片合成一份、
     /// 改掉关系 id，所以按图片内容分组，每组按建图的顺序排（没写的也占一个位置）
     alts: Alts,
+    /// 标题编号定义
+    heading_numbering: Option<crate::doc::HeadingNumbering>,
+    /// 标题编号每一段（restartHeadingNumbering 分开的）用的 w:num
+    heading_nums: BTreeMap<usize, usize>,
+    /// 标题编号的 abstractNum
+    heading_abs: Option<usize>,
 }
 
 impl Ctx<'_> {
@@ -1032,15 +1054,7 @@ impl Ctx<'_> {
                 self.children(n);
                 self.page_break();
             }
-            Component::Heading(p) => {
-                let para = self.para(
-                    Paragraph::new().style(&format!("Heading{}", p.level)),
-                    s,
-                    &n.id,
-                );
-                let para = self.inline(para, p.text.runs().cloned().collect(), &n.id);
-                self.blocks.push(Block::P(para));
-            }
+            Component::Heading(p) => self.heading(n, p),
             Component::Text(p) => {
                 let para = self.para(Paragraph::new(), s, &n.id);
                 let para = self.inline(para, p.text.runs().cloned().collect(), &n.id);
@@ -1084,6 +1098,194 @@ impl Ctx<'_> {
                 self.sections.push((lay.clone(), blocks));
             }
         }
+    }
+
+    /// 标题。开了编号的级别：编号来自标题样式上的 w:numPr，段落不再写缩进（缩进在编号定义里）；
+    /// 重新编号的节里的标题直接写指向那一段 w:num 的 numPr；numbered: false 写 numId 0 关掉编号。
+    /// 编号的字体字号颜色跟段落标记走，所以段落标记的 rPr 写成标题文字的样式。
+    fn heading(&mut self, n: &Node, p: &crate::components::HeadingProps) {
+        let s = &n.style;
+        let lvl = p.level.clamp(1, 6);
+        let def = self
+            .heading_numbering
+            .as_ref()
+            .and_then(|h| h.level(lvl))
+            .cloned();
+        let mut ps = s.clone();
+        let mut para = Paragraph::new().style(&format!("Heading{lvl}"));
+        match (&p.number, &def) {
+            (Some(_), Some(d)) => {
+                let fs = s.size_pt();
+                let same = |a: Option<Len>, b: Option<Len>| {
+                    a.map(|x| x.pt(fs, 0.0)).unwrap_or(0.0)
+                        == b.map(|x| x.pt(fs, 0.0)).unwrap_or(0.0)
+                };
+                if same(s.margin_left, d.margin_left)
+                    && same(s.text_indent, d.text_indent)
+                    && s.hanging_indent.is_none()
+                {
+                    ps.margin_left = None;
+                    ps.text_indent = None;
+                } else if self.heading_tab(lvl) {
+                    // 标题自己改了缩进：段落上直接写，换算成编号定义那样的悬挂
+                    let h = self.heading_hang(lvl, fs);
+                    let ml = s.margin_left.map_or(0.0, |x| x.pt(fs, 0.0));
+                    ps.margin_left = Some(Len::Pt(ml));
+                    ps.hanging_indent = Some(Len::Pt(h));
+                    ps.text_indent = None;
+                }
+                let g = p.number_group;
+                if g > 0 {
+                    let num = self.heading_num(g);
+                    para =
+                        para.numbering(NumberingId::new(num), IndentLevel::new(lvl as usize - 1));
+                } else {
+                    // 样式里的 numPr 生效；先把编号定义建好
+                    self.heading_num(0);
+                }
+            }
+            (None, Some(_)) => {
+                para = para.numbering(NumberingId::new(0), IndentLevel::new(0));
+            }
+            _ => {}
+        }
+        let mut para = self.para(para, &ps, &n.id);
+        if p.number.is_some() {
+            let mark = self.run_props(Run::new(), &s.text_only_no_bg(), &n.id);
+            para.property.run_property = mark.run_property;
+        }
+        let para = self.inline(para, p.text.runs().cloned().collect(), &n.id);
+        self.blocks.push(Block::P(para));
+    }
+
+    fn heading_tab(&self, lvl: u8) -> bool {
+        self.heading_numbering
+            .as_ref()
+            .is_some_and(|h| matches!(h.gap(lvl), MarkerGap::Tab | MarkerGap::Len(_)))
+    }
+
+    fn heading_hang(&self, lvl: u8, fs: f32) -> f32 {
+        self.heading_numbering
+            .as_ref()
+            .map_or(fs * 3.0, |h| h.hanging_pt(lvl, fs))
+    }
+
+    /// 标题编号主 num（有编号的标题才有）。
+    fn heading_main_num(&self) -> Option<usize> {
+        self.heading_nums.get(&0).copied()
+    }
+
+    /// 第 `g` 段标题编号用的 w:num，第一次用到时建：第 0 段是样式里引用的那个，
+    /// 后面每段单开一个 num，指向同一个 abstractNum，各级 startOverride 从头数。
+    fn heading_num(&mut self, g: usize) -> usize {
+        if let Some(n) = self.heading_nums.get(&g) {
+            return *n;
+        }
+        let hn = self.heading_numbering.clone().unwrap_or_default();
+        let abs = match self.heading_abs {
+            Some(a) => a,
+            None => {
+                let a = self.next_abs;
+                self.next_abs += 1;
+                let mut an = AbstractNumbering::new(a);
+                for lvl in 1..=9u8 {
+                    an = an.add_level(self.heading_level_def(&hn, lvl));
+                }
+                self.abstracts.push(an);
+                self.heading_abs = Some(a);
+                a
+            }
+        };
+        let num = self.next_num;
+        self.next_num += 1;
+        let mut nm = Numbering::new(num, abs);
+        if g > 0 {
+            for lvl in 1..=6u8 {
+                if hn.level(lvl).is_some() {
+                    nm = nm.add_override(
+                        LevelOverride::new(lvl as usize - 1).start(hn.start(lvl) as usize),
+                    );
+                }
+            }
+        }
+        self.nums.push(nm);
+        self.heading_nums.insert(g, num);
+        num
+    }
+
+    /// 标题编号的一级。没开编号的级别（和 7 到 9 级）写成不显示编号、不绑样式。
+    fn heading_level_def(&mut self, hn: &crate::doc::HeadingNumbering, lvl: u8) -> Level {
+        let lv = lvl as usize - 1;
+        let Some(d) = hn.level(lvl).filter(|_| lvl <= 6) else {
+            return Level::new(
+                lv,
+                Start::new(1),
+                NumberFormat::new("none"),
+                LevelText::new(""),
+                LevelJc::new("left"),
+            )
+            .suffix(LevelSuffixType::Nothing);
+        };
+        // 字号按这一级标题的样式算（相对单位要用它）
+        let mut hs = builtin_heading(lvl);
+        hs.merge(d);
+        let fs = hs.size_pt();
+        let ty = hn.ty(lvl);
+        let text = match ty.bullet().filter(|_| !ty.ordered()) {
+            Some(b) => b,
+            None => hn.format(lvl),
+        };
+        let ml = hs.margin_left.map_or(0.0, |x| x.pt(fs, 0.0));
+        let gap = hn.gap(lvl);
+        let (left, special, suffix) = match gap {
+            MarkerGap::Tab | MarkerGap::Len(_) => {
+                let h = hn.hanging_pt(lvl, fs);
+                (
+                    ml + h,
+                    Some(SpecialIndentType::Hanging(units::twip(h))),
+                    LevelSuffixType::Tab,
+                )
+            }
+            MarkerGap::Space => (
+                ml,
+                hs.text_indent
+                    .map(|t| SpecialIndentType::FirstLine(units::twip(t.pt(fs, 0.0)))),
+                LevelSuffixType::Space,
+            ),
+            MarkerGap::None => (
+                ml,
+                hs.text_indent
+                    .map(|t| SpecialIndentType::FirstLine(units::twip(t.pt(fs, 0.0)))),
+                LevelSuffixType::Nothing,
+            ),
+        };
+        let mut level = Level::new(
+            lv,
+            Start::new(hn.start(lvl) as usize),
+            NumberFormat::new(num_format(&ty)),
+            LevelText::new(text),
+            LevelJc::new("left"),
+        )
+        .paragraph_style(format!("Heading{lvl}"))
+        .indent(Some(units::twip(left)), special, None, None)
+        .suffix(suffix);
+        if let Some(c) = &d.list_marker_color {
+            level = level.color(c.rgb());
+        }
+        if let Some(pct) = d.list_marker_size {
+            level = level.size((fs * pct / 100.0 * 2.0).round() as usize);
+        }
+        if let Some(f) = &d.list_marker_font {
+            level = level.fonts(RunFonts::new().ascii(f).hi_ansi(f).east_asia(f).cs(f));
+        }
+        if common::legal(&ty) && lvl > 1 {
+            level = level.is_lgl();
+        }
+        if matches!(gap, MarkerGap::Len(_)) {
+            self.warn
+                .unsupported(FORMAT, "listMarkerGap（长度，按制表符处理）", "Heading");
+        }
+        level
     }
 
     /// 把一个元素渲染成段落和表格，给页眉页脚用。
@@ -2287,6 +2489,59 @@ fn border_type(b: &Border) -> BorderType {
 /// 线宽换成 1/8 pt，Word 只认 2 到 96。
 fn eighths(pt: f32) -> usize {
     ((pt * 8.0).round() as usize).clamp(2, 96)
+}
+
+/// docx-rs 把段落标记的 w:rPr 写在 w:pPr 最前面，schema 要求它在最后（w:sectPr 之前）。
+/// 空的 `<w:rPr />` 一直这样写，Word 不在意；有内容的（编号标题的段落标记）挪到该在的位置。
+fn fix_ppr_rpr(xml: &[u8]) -> Vec<u8> {
+    let s = String::from_utf8_lossy(xml);
+    const OPEN: &str = "<w:pPr><w:rPr>";
+    if !s.contains(OPEN) {
+        return xml.to_vec();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut rest: &str = &s;
+    while let Some(i) = rest.find(OPEN) {
+        let after = &rest[i + OPEN.len()..];
+        let (Some(rend), Some(pend)) = (after.find("</w:rPr>"), after.find("</w:pPr>")) else {
+            break;
+        };
+        if rend > pend {
+            break;
+        }
+        let rpr = &after[..rend + "</w:rPr>".len()];
+        let body = &after[rend + "</w:rPr>".len()..pend];
+        out.push_str(&rest[..i]);
+        out.push_str("<w:pPr>");
+        match body.find("<w:sectPr") {
+            Some(k) => {
+                out.push_str(&body[..k]);
+                out.push_str("<w:rPr>");
+                out.push_str(rpr);
+                out.push_str(&body[k..]);
+            }
+            None => {
+                out.push_str(body);
+                out.push_str("<w:rPr>");
+                out.push_str(rpr);
+            }
+        }
+        out.push_str("</w:pPr>");
+        rest = &after[pend + "</w:pPr>".len()..];
+    }
+    out.push_str(rest);
+    out.into_bytes()
+}
+
+/// 内置的标题样式（Heading 加 Heading.N），算标题编号定义的字号用。
+fn builtin_heading(lvl: u8) -> PStyle {
+    let mut s = PStyle::default();
+    for k in ["Heading".to_string(), format!("Heading.{lvl}")] {
+        if let Some(b) = crate::cascade::builtin(&k) {
+            s.merge(b);
+        }
+    }
+    s
 }
 
 fn find_toc(n: &Node) -> Option<&Node> {

@@ -1,0 +1,38 @@
+{
+  "version": "0.1",
+  "meta": { "title": "标题自动编号", "lang": "zh-CN", "page": { "size": "A4", "margin": "20mm" } },
+  "styles": {
+    "Heading.1": { "listStyleType": "cjk-decimal", "listMarkerFormat": "第%1章" },
+    "Heading.2": { "listMarkerFormat": "%1.%2" },
+    "Heading.3": { "listMarkerFormat": "%1.%2.%3", "listMarkerGap": "tab", "listHanging": "3.5em" }
+  },
+  "root": "doc",
+  "elements": {
+    "doc": { "type": "Document", "children": ["main", "appendix"] },
+    "main": {
+      "type": "Section",
+      "children": ["toc", "pre", "pre-text", "c1", "c1-text", "c1-1", "c1-2", "c1-2-1", "c1-2-2", "c2", "c2-1", "c2-1-1", "c2-2"]
+    },
+    "toc": { "type": "TableOfContents", "props": { "title": "目录", "levels": 3 } },
+    "pre": { "type": "Heading", "props": { "level": 1, "text": "前言", "numbered": false } },
+    "pre-text": { "type": "Text", "props": { "text": "前言不编号，也不占号，后面的第一章仍然是「第一章」。" } },
+    "c1": { "type": "Heading", "props": { "level": 1, "text": "总则" } },
+    "c1-text": { "type": "Text", "props": { "text": "一级标题用「第%1章」加中文数字，二级标题的 %1 自动换成阿拉伯数字（Word 的「正规形式编号」）。" } },
+    "c1-1": { "type": "Heading", "props": { "level": 2, "text": "适用范围" } },
+    "c1-2": { "type": "Heading", "props": { "level": 2, "text": "术语" } },
+    "c1-2-1": { "type": "Heading", "props": { "level": 3, "text": "三级标题用制表符隔开，标题很长折行时第二行和第一行的文字对齐，不会缩到编号下面去" } },
+    "c1-2-2": { "type": "Heading", "props": { "level": 3, "text": "缩写" } },
+    "c2": { "type": "Heading", "props": { "level": 1, "text": "实施" } },
+    "c2-1": { "type": "Heading", "props": { "level": 2, "text": "步骤" } },
+    "c2-1-1": { "type": "Heading", "props": { "level": 3, "text": "准备" } },
+    "c2-2": { "type": "Heading", "props": { "level": 2, "text": "验收" } },
+    "appendix": {
+      "type": "Section",
+      "props": { "restartHeadingNumbering": true },
+      "children": ["a1", "a1-text", "a1-1"]
+    },
+    "a1": { "type": "Heading", "props": { "level": 1, "text": "附录" } },
+    "a1-text": { "type": "Text", "props": { "text": "这一节写了 restartHeadingNumbering，编号从头数，所以又是「第一章」。" } },
+    "a1-1": { "type": "Heading", "props": { "level": 2, "text": "参考资料" } }
+  }
+}

@@ -61,7 +61,7 @@ document-render 把一份 JSON 文档渲染成 docx、pdf、html，也能出 Mar
 - `parts`：部位样式，比如表格的 `header`、`evenRow`、`lastRow`，列表的 `level2`、`marker`。
 - `children`：子元素 id 列表，只有容器组件（Document、Slide、Section）能用。每个元素只能被引用一次。
 
-文字类的 props（Heading 的 `text`、Text 的 `text`、List 的每一项、表格的每一格）都能写成纯字符串，也能写成 runs 数组。数组里可以直接写字符串，也可以写对象：`bold`、`italic`、`underline`、`color`、`href` 是简写，`style` 能写全部文字样式；`"type": "InlineCode"` 表示行内代码，`"type": "InlineMath"` 表示行内公式（text 写 LaTeX）。块级公式用 Math 组件，写法见 [STYLE.md](STYLE.md) 第十四节。列表项可以写成 `{ "text": …, "items": [...] }` 带子列表，同一级的子列表可以有的有序、有的无序。被正文隔开的两段列表，后一段写 `continueFrom` 指向前一段，就接着编号；项与项之间的距离用样式字段 `itemSpacing` 调。
+文字类的 props（Heading 的 `text`、Text 的 `text`、List 的每一项、表格的每一格）都能写成纯字符串，也能写成 runs 数组。数组里可以直接写字符串，也可以写对象：`bold`、`italic`、`underline`、`color`、`href` 是简写，`style` 能写全部文字样式；`"type": "InlineCode"` 表示行内代码，`"type": "InlineMath"` 表示行内公式（text 写 LaTeX）。块级公式用 Math 组件，写法见 [STYLE.md](STYLE.md) 第十四节。列表项可以写成 `{ "text": …, "items": [...] }` 带子列表，同一级的子列表可以有的有序、有的无序。被正文隔开的两段列表，后一段写 `continueFrom` 指向前一段，就接着编号；项与项之间的距离用样式字段 `itemSpacing` 调。标题的自动编号写在 `styles` 的 `Heading.N` 上，字段和列表一样（`listStyleType`、`listMarkerFormat` 等），docx 里是绑在标题样式上的 Word 多级列表；单个标题写 `"numbered": false` 不编号。
 
 `meta.page` 管纸张：`size`（默认 A4，也可以写 `{ "width", "height" }`）、`landscape`、`margin` 和四个单边、`gutter`、`columns`，还有页眉页脚 `header`、`footer`，页码起始 `pageNumberStart` 和页码格式 `pageNumberFormat`（罗马数字、字母、中文数字）。要分节就在 root 下面放 `Section`，每节能单独改这些设置；runs 里写 `{ "field": "page" }` 显示页码。细节见 [STYLE.md](STYLE.md) 第十节。
 
@@ -120,6 +120,7 @@ document-render parse report.docx -o out/report.json --assets img   # 图片导�
 - 正文和行内样式：字体、字号、颜色、粗体、斜体、下划线、删除线、上下标、大小写、字间距、缩放、高亮、底纹、着重号、隐藏；链接（超链接和 HYPERLINK 域）；行内代码（字符样式叫 InlineCode 的）。
 - 段落格式：对齐、段前段后、行距（Word 的多倍行距读成 `{ "multiple": 倍数 }`，乘的是字体自己的单倍行高，跟 Word 一样）、缩进（按字符计的写成 em）、与下段同页、段中不分页、段前分页、孤行控制、边框和底纹。
 - 列表：numbering.xml 里的编号变成 List，有序无序、嵌套、每一级的编号类型、编号模板、起始编号、缩进、编号颜色和字号。同一级里各串子列表按各自的编号定义读（lvlOverride 换掉整级定义的也认）。被别的段落隔开、但用同一个编号的两组段落读成两个 List，后一个带 `continueFrom`。每一级项间距一致时读成 `itemSpacing`。
+- 标题编号：标题样式上绑的多级编号读回 `Heading.N` 的列表字段；写了 numId 0 的标题读成 `"numbered": false`；某节里的标题换成从头数的编号时读成那一节的 `restartHeadingNumbering`。
 - 表格：合并格（gridSpan、vMerge）、列宽、行高、每格的底纹、边框、对齐、竖排、边距；表头按 Word 的「重复标题行」（w:tblHeader）认：第一行设了它就变成表头 columns，原来没底纹的写成 `parts.header` 的 `"background": "none"`，有底纹的照写；没设的第一行当普通行。好几行都设了时只有第一行当表头，给警告。
 - 图片：行内图片和单独一段的图片（Image），图片文件导到 JSON 旁边的目录，JSON 里写相对路径；浮动图片按位置写成 float 或 absolute。替代文字从 wp:docPr 的 descr 读，没有 descr 时用 title；Image 写成 `alt`，行内图片写成 `text`。
 - 分节：纸张大小和方向、页边距、页眉页脚距离、分栏、首页不同、奇偶页不同、页码起始值、页码格式（decimal、罗马数字、字母、chineseCounting；别的格式给警告，按阿拉伯数字处理）。第一节写在 `meta.page`，后面每节一个 Section。

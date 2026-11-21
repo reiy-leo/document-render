@@ -267,6 +267,28 @@ Word 的列表定义在 numbering.xml：`w:abstractNum` 下每一级一个 `w:lv
 - pdf、html：算好起始号，直接写编号文字。md：写算好的数字。
 - parse：正文里不挨着的两组段落用同一个 numId（或者同一个 abstractNum、后一个 num 第一级没写 startOverride）时，后一组读成带 `continueFrom` 的 List。
 
+### 标题编号（`Heading`、`Heading.N` 上的列表字段）
+
+标题的自动编号沿用列表字段，写在组件样式 `Heading`（所有级别）或 `Heading.N`（某一级）上，只看样式表里写的值，不看继承来的：
+
+| 字段 | 标题上的意思 | 默认 |
+|---|---|---|
+| `listStyleType` | 这一级的数字写法；`none` 关掉 | `decimal` |
+| `listMarkerFormat` | 模板，`%k` 是第 k 级标题的号 | 把 1 到 N 级里开了编号的级别用点连起来：`%1`、`%1.%2` |
+| `listStart` | 起始号 | 1 |
+| `listMarkerGap` | 编号后面：`space`、`none`、`tab`（长度按 `tab` 处理并警告） | `space` |
+| `listHanging` | `tab` 时编号区宽度 | `3em` |
+| `listMarkerColor` `listMarkerFont` `listMarkerSize` | 只改编号 | 跟标题文字 |
+
+写了 `listStyleType`（不是 `none`）或 `listMarkerFormat` 的级别才开编号。计数和 Word 一样：本级加一，更深的级别回到起始号之前；上级从没出现过时按「起始号 − 1」填（先出现二级标题会是「0.1」）。本级是 `decimal` 时上几级也写成阿拉伯数字（Word 的 isLgl）。标题 props 写 `"numbered": false` 时不编号、不计数。Section 写 `"restartHeadingNumbering": true` 时各级从头数。编号字段写在单个标题的 `style` 里会报错（Word 的编号定义是全文一份，单个标题改不了）。
+
+- docx：一个 abstractNum，9 级；开了编号的级别写 w:pStyle 绑到 `Heading1`…`Heading6`，标题样式的 w:pPr 里写 w:numPr 指回来，标题段落本身不写编号。这就是 Word 的「多级列表链接到标题样式」：增删标题自动重排，导航窗格、目录（TOC 域更新后）都带编号。`numbered: false` 的标题写 numId 0。重新编号的节单开一个 w:num，各级 w:startOverride，节里的标题直接写这个 numId。编号字体字号跟段落标记走，所以编号标题写段落标记的 w:rPr（标题文字的样式）。缩进：`space`、`none` 时 w:ind left 是标题的 `marginLeft`、firstLine 是 `textIndent`；`tab` 时 left = `marginLeft` + `listHanging`，hanging = `listHanging`。
+- pdf：编号算好写进标题内容，正文、目录（outline）、PDF 书签里都有。`tab` 时编号放在宽 `listHanging` 的框里（编号更宽时框跟着变宽），标题悬挂缩进 `listHanging`。
+- html：标题前面加 `<span class="document-render-heading-number">`；`tab` 时编号是宽 `listHanging` 的行内块，标题 `padding-left` 加负 `text-indent`。
+- md：编号写进标题文字，`## 1.2 术语`。
+- 目录：四种格式都带编号，编号和标题之间是一个空格（`none` 时没有）。docx 预先填好的目录项也是这样；Word 更新域后由 Word 重排。
+- parse：标题样式上有 w:numPr（不是段落自己写的）时读成编号标题，不当列表：编号定义读回 `Heading.N` 的这些字段，缩进换回标题自己的 `marginLeft`、`textIndent`；段落写 numId 0 的读成 `"numbered": false`；标题直接指向同一个 abstractNum 的另一个 num、这个 num 有 startOverride 时，所在的节读成 `restartHeadingNumbering`。标题样式绑的编号级别和标题级别对不上（比如「标题 2」绑第 1 级）时不读编号，给警告。
+
 ## 八、图片位置（对应 wp:inline / wp:anchor、p:pic 的 a:xfrm、xlsx 的 xdr anchor）
 
 | 字段 | 值 | Word | PPT | Excel | HTML | PDF |

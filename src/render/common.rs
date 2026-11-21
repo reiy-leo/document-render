@@ -225,7 +225,7 @@ pub fn legal(ty: &ListStyleType) -> bool {
 /// `%1.%2` 里的 %k 换成第 k 级的编号（和 Word 的 lvlText 一样，%1 是第一级）。
 /// `legal` 为真时上几级一律用这一级的数字写法。%k 指向比本级还深的级别时没有编号可填，直接去掉，
 /// 不会把模板文字原样留下。
-fn fill_format(f: &str, counters: &[u32], types: &[ListStyleType], legal: bool) -> String {
+pub fn fill_format(f: &str, counters: &[u32], types: &[ListStyleType], legal: bool) -> String {
     let own = types.last();
     let mut out = String::new();
     let mut chars = f.chars().peekable();
@@ -668,28 +668,54 @@ pub fn rebase_runs(t: &Inline, old: &Style, new: &Style) -> Vec<Run> {
 /// 目录里的一项。
 pub struct TocEntry {
     pub level: u8,
+    /// 标题文字；标题有编号时前面带上编号和一个空格（分隔写 none 时不加空格）
     pub text: String,
     pub id: String,
 }
 
+/// 文档的标题编号定义（建树时放在根 Document 上）。
+pub fn heading_numbering(root: &Node) -> Option<&crate::doc::HeadingNumbering> {
+    match &root.component {
+        crate::components::Component::Document(d) => d.heading_numbering.as_deref(),
+        _ => None,
+    }
+}
+
+/// 标题编号后面跟的文字：空格分隔是一个空格，none 是空串；制表符在 html、md、目录里也写成空格。
+pub fn heading_sep(hn: Option<&crate::doc::HeadingNumbering>, level: u8) -> &'static str {
+    match hn.map(|h| h.gap(level)) {
+        Some(crate::style::MarkerGap::None) => "",
+        _ => " ",
+    }
+}
+
 /// 按文档顺序收 1 到 depth 级标题，给 docx、html 的目录用（PDF 交给 typst 的 outline）。
 pub fn toc_entries(root: &Node, depth: u8) -> Vec<TocEntry> {
-    fn walk(n: &Node, depth: u8, out: &mut Vec<TocEntry>) {
+    fn walk(
+        n: &Node,
+        depth: u8,
+        hn: Option<&crate::doc::HeadingNumbering>,
+        out: &mut Vec<TocEntry>,
+    ) {
         if let crate::components::Component::Heading(h) = &n.component
             && h.level <= depth
         {
+            let text = match &h.number {
+                Some(no) => format!("{no}{}{}", heading_sep(hn, h.level), h.text.plain_text()),
+                None => h.text.plain_text(),
+            };
             out.push(TocEntry {
                 level: h.level,
-                text: h.text.plain_text(),
+                text,
                 id: n.id.clone(),
             });
         }
         for c in &n.children {
-            walk(c, depth, out);
+            walk(c, depth, hn, out);
         }
     }
     let mut out = Vec::new();
-    walk(root, depth, &mut out);
+    walk(root, depth, heading_numbering(root), &mut out);
     out
 }
 

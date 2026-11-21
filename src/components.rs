@@ -185,7 +185,12 @@ impl Inline {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct DocumentProps {}
+pub struct DocumentProps {
+    /// 算好的标题编号定义（各级），建树时填，不出现在 JSON 里
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub heading_numbering: Option<Box<crate::doc::HeadingNumbering>>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -193,6 +198,18 @@ pub struct HeadingProps {
     #[schemars(range(min = 1, max = 6))]
     pub level: u8,
     pub text: Inline,
+    /// 写 false 时这个标题不编号，也不占号（前言、目录标题这类）；
+    /// 标题编号在 styles 的 Heading、Heading.N 上用 listStyleType、listMarkerFormat 打开
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub numbered: Option<bool>,
+    /// 建树时算好的编号文字（如「1.2」），不编号时是 None，不出现在 JSON 里
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub number: Option<String>,
+    /// 第几段编号：每遇到一个 restartHeadingNumbering 的节加一，docx 按它选 w:num
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub number_group: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -631,6 +648,9 @@ pub struct SectionProps {
     /// 本节页码从几重新开始
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_number_start: Option<u32>,
+    /// 标题编号从本节重新数（第一章、1.1 都从头）；不写时接着上一节数
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restart_heading_numbering: Option<bool>,
     /// 页码的数字格式：decimal、lowerRoman、upperRoman、lowerLetter、upperLetter、chineseCounting
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_number_format: Option<crate::doc::PageNumberFormat>,

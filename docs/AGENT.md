@@ -139,12 +139,52 @@ run 对象的字段见 3.17。
 |---|---|---|---|---|
 | `level` | 整数 1–6 | 是 | — | 超出范围报错 |
 | `text` | inline | 是 | — | 标题文字 |
+| `numbered` | 布尔 | 否 | 跟这一级 | 写 `false` 时这个标题不编号，也不占号 |
 
 内置样式：粗体、`keepWithNext`；字号 1 级 20、2 级 16、3 级 14、4 级 12、5/6 级 11（pt）。docx 挂 Word「标题 N」样式，目录能收。
 
 ```json
 "h1": { "type": "Heading", "props": { "level": 2, "text": "一、概况" } }
 ```
+
+**自动编号**：不要把「1.2」手写进标题文字，在 `styles` 里给 `Heading.N`（或给所有级别的 `Heading`）写编号字段，字段和列表一样：
+
+| 字段 | 说明 |
+|---|---|
+| `listStyleType` | 这一级的数字写法，默认 `decimal`；写 `"none"` 关掉这一级 |
+| `listMarkerFormat` | 模板，`%k` 是第 k 级标题的号：`"第%1章"`、`"%1.%2"`、`"%1、"`。没写时是 `%1`、`%1.%2`、`%1.%2.%3`…（只连开了编号的级别） |
+| `listStart` | 这一级从几开始，默认 1 |
+| `listMarkerGap` | 编号后面：`space`（默认，一个空格）、`none`（紧挨着，适合「一、」）、`tab`（制表符，编号占 `listHanging` 宽，标题折行时和第一行文字对齐） |
+| `listHanging` | `tab` 时编号区宽度，默认 `3em` |
+| `listMarkerColor` `listMarkerFont` `listMarkerSize` | 只改编号的颜色、字体、大小 |
+
+写了 `listStyleType`（不是 `none`）或 `listMarkerFormat` 的级别才编号。规则：
+
+- 编号按文档顺序数：本级加一，更深的级别从头数。没开编号的级别、写了 `"numbered": false` 的标题不编号也不占号，前言、目录标题、附录说明这类就这么写。
+- 某一级是阿拉伯数字时，模板里上几级也写成阿拉伯数字（Word 的「正规形式编号」）：一级「第一章」，二级 `"%1.%2"` 出来是「1.1」，不是「一.1」。
+- 编号字段只能写在 `styles`（或样式集 `components`）的 `Heading`、`Heading.N` 上；写进单个标题的 `style` 会报错。
+- 分节后默认接着数；某一节要从头数，在那个 Section 上写 `"restartHeadingNumbering": true`。
+- 目录在四种格式里都带编号。docx 里编号是 Word 原生的多级列表，绑在「标题 1–6」样式上：在 Word 里增删标题会自动重排，导航窗格和更新后的目录都有编号。
+
+<!-- check -->
+```json
+{
+  "styles": {
+    "Heading.1": { "listStyleType": "cjk-decimal", "listMarkerFormat": "第%1章" },
+    "Heading.2": { "listMarkerFormat": "%1.%2" }
+  },
+  "root": "doc",
+  "elements": {
+    "doc": { "type": "Document", "children": ["toc", "pre", "c1", "c1-1"] },
+    "toc": { "type": "TableOfContents", "props": { "title": "目录" } },
+    "pre": { "type": "Heading", "props": { "level": 1, "text": "前言", "numbered": false } },
+    "c1": { "type": "Heading", "props": { "level": 1, "text": "总则" } },
+    "c1-1": { "type": "Heading", "props": { "level": 2, "text": "适用范围" } }
+  }
+}
+```
+
+出来是「前言」「第一章 总则」「1.1 适用范围」。
 
 ### 3.4 Text
 
@@ -341,6 +381,7 @@ run 对象的字段见 3.17。
 | `header` `footer` | 元素 id，或 `{ "default", "first", "even" }`，或 `null` | 见下 |
 | `pageNumberStart` | 整数 | 本节页码从几开始 |
 | `pageNumberFormat` | `decimal` `lowerRoman` `upperRoman` `lowerLetter` `upperLetter` `chineseCounting` | 页码数字格式 |
+| `restartHeadingNumbering` | 布尔 | 标题编号从本节重新数（见 3.3）；不写时接着上一节数，也不沿用到下一节 |
 
 页眉页脚规则：
 
@@ -521,6 +562,8 @@ run 对象字段（多写会报错）：
 | `opacity` | 0–1 | |
 
 ### 4.6 列表（写在 List 的 `style` 或 `parts.levelN` 上）
+
+这些字段也用来给标题编号，写在 `styles` 的 `Heading`、`Heading.N` 上，见 3.3。
 
 `listStyleType`、`listMarkerFormat`、`listMarkerImage`、`listMarkerFont`、`listStart` 写在元素 `style` 上只管第一级，其余列表字段管所有级别（见 3.7）。
 
@@ -903,6 +946,8 @@ prop `type`：`string`（默认）`number` `integer` `boolean` `array` `object` 
 | 隔开的第二段列表想接着编号，写了 `"listStart": 4` | 第一段增删项后对不上，Word 里也不联动 | `"continueFrom": "第一段的id"` |
 | `continueFrom` 指向后面的列表，或同时写 `listStart` | 报错 | 只指向前面的 List，去掉 `listStart` |
 | 想调列表项之间的距离，在 List 的 `style` 上写 `spaceBefore` | 只改整个列表前面的距离 | `itemSpacing` |
+| 标题编号手写进文字 `"text": "1.2 术语"` | Word 里增删标题不重排，目录也不联动 | `styles` 里给 `Heading.N` 写 `listMarkerFormat`，文字只写「术语」 |
+| 标题编号写在单个标题的 `style` 上 | 报错 | 写在 `styles` 的 `Heading.N` 上；单个标题不编号写 `"numbered": false` |
 | 二级的 `listMarkerFormat` 写成 `"%1."` | 二级每项都显示一级的编号（`%1` 是第一级） | 写 `"%2."` 或 `"%1.%2"` |
 | 长度写 `"2字符"`、`"10 pt"` 以外的怪单位 | 报错 | 单位只认 `pt mm cm in px em line %` |
 | `listStyleType: "roman"` | 报错；而 `"abc"`（≤3 字符）会被当成符号 | `"lower-roman"` |

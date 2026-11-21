@@ -182,6 +182,7 @@ fn markup_with<'a>(doc: &Doc, tree: &Node, opts: &'a Options, math_fallback: boo
         math_fallback,
         had_math: false,
         marker_font: None,
+        heading_numbering: common::heading_numbering(tree).cloned(),
     };
     m.preamble(doc);
     let base = Style::default();
@@ -211,6 +212,8 @@ struct Markup<'a> {
     /// 正在排的列表项的编号字体（listMarkerFont）和编号字号相对段落字号的比例，
     /// Word 量行高时把编号也算进去
     marker_font: Option<(String, f32)>,
+    /// 标题编号定义（从根 Document 上取）
+    heading_numbering: Option<crate::doc::HeadingNumbering>,
 }
 
 impl Markup<'_> {
@@ -324,10 +327,63 @@ impl Markup<'_> {
                 } else {
                     "regular"
                 };
+                let size = s.size_pt();
+                // 编号：typst 的 heading numbering 写成返回算好编号的函数（不用 typst 自己的计数），
+                // 编号后面带上分隔的空格。正文由下面的 show 规则排；目录（outline）用 prefix 显示它，
+                // 和 Word 更新后的目录一样是「编号 标题」
+                let (numbering, show) = match &p.number {
+                    None => (
+                        String::new(),
+                        format!("text(size: {size}pt, weight: \"{weight}\", it.body)"),
+                    ),
+                    Some(no) => {
+                        let hn_own = self.heading_numbering.clone();
+                        let hn = hn_own.as_ref();
+                        let ms = hn
+                            .and_then(|h| h.level(p.level))
+                            .cloned()
+                            .unwrap_or_default();
+                        let fs = s.size_pt();
+                        let mut mt = Style::default();
+                        if let Some(c) = &ms.list_marker_color {
+                            mt.color = Some(c.clone());
+                        }
+                        if let Some(f) = &ms.list_marker_font {
+                            mt.font_family = Some(crate::style::FontFamily {
+                                latin: Some(f.clone()),
+                                east_asia: Some(f.clone()),
+                                complex: None,
+                            });
+                        }
+                        if let Some(pct) = ms.list_marker_size {
+                            mt.font_size = Some(Len::Pt(fs * pct / 100.0));
+                        }
+                        let margs = self.text_args(&mt, &Style::default(), &n.id);
+                        let mut m = format!("#{}", lit(no));
+                        if !margs.is_empty() {
+                            m = format!("#text({margs})[{m}]");
+                        }
+                        let sep = common::heading_sep(hn, p.level);
+                        let numbering = format!(", numbering: (..n) => [{m}#{}]", lit(sep));
+                        let show = match hn.map(|h| h.gap(p.level)) {
+                            // 制表符：编号占 listHanging 宽的一列（编号更宽时这列跟着变宽，像 Word 跳到下一个制表位），
+                            // 标题折行时和第一行文字对齐
+                            Some(MarkerGap::Tab | MarkerGap::Len(_)) => {
+                                let h = hn.map_or(fs * 3.0, |x| x.hanging_pt(p.level, fs));
+                                format!(
+                                    "text(size: {size}pt, weight: \"{weight}\")[#context {{ let m = (it.numbering)(); grid(columns: (calc.max({h}pt, measure(m).width), 1fr), m, it.body) }}]"
+                                )
+                            }
+                            _ => format!(
+                                "text(size: {size}pt, weight: \"{weight}\")[#(it.numbering)()#it.body]"
+                            ),
+                        };
+                        (numbering, show)
+                    }
+                };
                 self.block(
                     format!(
-                        "#show heading: it => text(size: {}pt, weight: \"{weight}\", it.body)\n#heading(level: {})[{body}]",
-                        s.size_pt(),
+                        "#show heading: it => {show}\n#heading(level: {}{numbering})[{body}]",
                         p.level
                     ),
                     s,
@@ -885,7 +941,7 @@ impl Markup<'_> {
         es.space_before = None;
         es.space_after = None;
         let ol = format!(
-            "#show outline.entry: it => block(above: {above}pt, below: {below}pt, inset: (left: {base}pt + (it.level - 1) * {step}pt), link(it.element.location(), [#it.body()#box(width: 1fr, repeat(gap: 0.15em)[.])#context document-render-info(loc: it.element.location()).page-text]))\n#outline(title: none, depth: {}, indent: 0pt)",
+            "#show outline.entry: it => block(above: {above}pt, below: {below}pt, inset: (left: {base}pt + (it.level - 1) * {step}pt), link(it.element.location(), [#if it.prefix() != none {{ it.prefix() }}#it.body()#box(width: 1fr, repeat(gap: 0.15em)[.])#context document-render-info(loc: it.element.location()).page-text]))\n#outline(title: none, depth: {}, indent: 0pt)",
             p.depth()
         );
         let src = self.block_src(ol, &es, s, &n.id);

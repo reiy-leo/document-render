@@ -231,6 +231,10 @@ struct Para {
     in_toc: bool,
     /// 直接格式里写了缩进（列表段落用它代替编号定义里的缩进）
     direct_ind: bool,
+    /// 标题样式上绑了编号（Word 的「多级列表链接到标题样式」）时的编号：
+    /// Some(Some(..)) 是这个标题有编号，Some(None) 是标题样式有编号但这段写了 numId 0（不编号）。
+    /// 这种标题不当列表项
+    heading_num: Option<Option<ListRef>>,
 }
 
 #[derive(Debug, Clone)]
@@ -258,6 +262,8 @@ struct Sect {
     pg_fmt: PageNumberFormat,
     headers: Vec<(String, String)>,
     footers: Vec<(String, String)>,
+    /// 这一节里有标题指向重新从头数的编号（restartHeadingNumbering）
+    restart_headings: bool,
 }
 
 impl Sect {
@@ -658,6 +664,8 @@ struct Ctx {
     list_hist: Vec<(i64, i64, String)>,
     /// 当前在不在正文里（页眉页脚里的列表不接续）
     in_body: bool,
+    /// 已经认成「本节重新编号」的标题 num
+    heading_restarts: HashSet<i64>,
 }
 
 /// 预扫时段落的种类。
@@ -773,6 +781,7 @@ impl Ctx {
             stats: Vec::new(),
             list_hist: Vec::new(),
             in_body: false,
+            heading_restarts: HashSet::new(),
         })
     }
 
@@ -1044,8 +1053,46 @@ impl Ctx {
         let mut probe = ppr.clone();
         probe.merge(&direct);
         let mut list = None;
+        // 标题样式自己带编号：这一段是「编号标题」，不是列表
+        let heading_abs = pstyle
+            .as_deref()
+            .filter(|s| self.styles.heading_level(s).is_some())
+            .and_then(|_| sp.num_id.filter(|n| *n > 0))
+            .and_then(|n| self.numbering.levels(n, &self.styles))
+            .map(|(abs, _)| abs);
+        let mut heading_num = None;
+        if heading_abs.is_some() && probe.num_id == Some(0) {
+            heading_num = Some(None);
+        }
         if let Some(num_id) = probe.num_id.filter(|n| *n > 0) {
             match self.numbering.levels(num_id, &self.styles) {
+                Some((abs, levels)) if heading_abs == Some(abs) => {
+                    let ilvl = probe.ilvl.unwrap_or(0).min(8);
+                    // 编号定义里的缩进换成标题自己的缩进：制表符分隔时编号在悬挂区，
+                    // 文字左边是 left - hanging 加上编号宽；空格、不分隔时首行从 left + firstLine 起
+                    let li = levels[ilvl].ind;
+                    let tab = levels[ilvl].suff.as_deref().is_none_or(|x| x == "tab");
+                    let left = li.left.unwrap_or(0.0) - li.hanging.unwrap_or(0.0);
+                    let ind = word::Ind {
+                        left: (left.abs() > 0.5).then_some(left),
+                        first_line: if tab {
+                            None
+                        } else {
+                            li.first_line.filter(|x| x.abs() > 0.5)
+                        },
+                        ..word::Ind::default()
+                    };
+                    ppr.merge(&PPr {
+                        ind,
+                        ..PPr::default()
+                    });
+                    heading_num = Some(Some(ListRef {
+                        num_id,
+                        abs,
+                        ilvl,
+                        levels,
+                    }));
+                }
                 Some((abs, levels)) => {
                     let ilvl = probe.ilvl.unwrap_or(0).min(8);
                     ppr.merge(&PPr {
@@ -1084,6 +1131,7 @@ impl Ctx {
             toc,
             in_toc,
             direct_ind: !direct.ind.is_empty(),
+            heading_num,
         }
     }
 
@@ -1525,6 +1573,89 @@ impl Ctx {
         ppr.merge(&sp);
         let rpr = merged(&self.styles.default_rpr, &sr);
         let fs = rpr.font_size.map(|l| l.abs_pt()).unwrap_or(10.0);
+        // 标题样式上绑的编号：读成 listStyleType、listMarkerFormat 等，缩进换成标题自己的
+        let lvl = sp
+            .num_id
+            .filter(|n| *n > 0)
+            .and_then(|n| self.numbering.levels(n, &self.styles))
+            .map(|(_, lv)| (sp.ilvl.unwrap_or(0).min(8), lv));
+        let mut numbering = Map::new();
+        if let Some((ilvl, lv)) = &lvl {
+            let l = &lv[*ilvl];
+            if *ilvl + 1 != level as usize {
+                self.warns.once(
+                    &format!("hnum:{level}"),
+                    format!(
+                        "标题 {level} 的样式绑的是编号第 {} 级，和标题级别对不上，编号没保留",
+                        ilvl + 1
+                    ),
+                );
+            } else {
+                let (ty, font) = list_type(l);
+                let tab = l.suff.as_deref().is_none_or(|x| x == "tab");
+                let li = l.ind;
+                let left = li.left.unwrap_or(0.0) - li.hanging.unwrap_or(0.0);
+                ppr.merge(&PPr {
+                    ind: word::Ind {
+                        left: (left.abs() > 0.5).then_some(left),
+                        first_line: if tab {
+                            None
+                        } else {
+                            li.first_line.filter(|x| x.abs() > 0.5)
+                        },
+                        ..word::Ind::default()
+                    },
+                    ..PPr::default()
+                });
+                if ty.ordered() {
+                    numbering.insert("listMarkerFormat".into(), json!(l.text));
+                    if ty != ListStyleType::Decimal {
+                        numbering.insert(
+                            "listStyleType".into(),
+                            serde_json::to_value(&ty).unwrap_or(Value::Null),
+                        );
+                    }
+                } else {
+                    numbering.insert(
+                        "listStyleType".into(),
+                        serde_json::to_value(&ty).unwrap_or(Value::Null),
+                    );
+                    if let Some(f) = font {
+                        numbering.insert("listMarkerFont".into(), json!(f));
+                    }
+                }
+                if let Some(st) = l.start.filter(|s| *s != 1) {
+                    numbering.insert("listStart".into(), json!(st));
+                }
+                match l.suff.as_deref() {
+                    Some("space") => {}
+                    Some("nothing") => {
+                        numbering.insert("listMarkerGap".into(), json!("none"));
+                    }
+                    _ => {
+                        numbering.insert("listMarkerGap".into(), json!("tab"));
+                        let h = li.hanging.unwrap_or(0.0) / 20.0;
+                        if (h - fs * 3.0).abs() > 0.05 {
+                            numbering.insert(
+                                "listHanging".into(),
+                                serde_json::to_value(word::nice_em(h, fs)).unwrap(),
+                            );
+                        }
+                    }
+                }
+                if let Some(c) = &l.rpr.color
+                    && rpr.color.as_ref() != Some(c)
+                {
+                    numbering.insert("listMarkerColor".into(), json!(c.css()));
+                }
+                if let Some(sz) = l.rpr.font_size.map(|x| x.abs_pt())
+                    && (sz - fs).abs() > 0.4
+                    && fs > 0.0
+                {
+                    numbering.insert("listMarkerSize".into(), json!(round2(sz / fs * 100.0)));
+                }
+            }
+        }
         let mut full = ppr.to_style(fs);
         full.merge(&text_of(&rpr));
         let mut eff = to_map(&full);
@@ -1546,6 +1677,7 @@ impl Ctx {
         if let Some(v) = eff.get("fontSize") {
             d.insert("fontSize".into(), v.clone());
         }
+        d.extend(numbering);
         self.comp.insert(key.clone(), from_map(&d));
         compact(&mut d);
         self.out_styles.insert(key, Value::Object(d));
@@ -1620,6 +1752,31 @@ impl Ctx {
             props.insert("level".into(), json!(l));
         }
         props.insert("text".into(), text);
+        if level.is_some() {
+            match &para.heading_num {
+                Some(None) => {
+                    props.insert("numbered".into(), json!(false));
+                }
+                // 标题直接指向另一个 num（同一个编号定义、从头数）：这一节重新编号
+                Some(Some(lr)) => {
+                    let style_num = para
+                        .pstyle
+                        .as_deref()
+                        .and_then(|s| self.styles.para(s).0.num_id);
+                    if Some(lr.num_id) != style_num
+                        && self.numbering.restarts(lr.num_id, lr.ilvl)
+                        && self.in_body
+                        && self.heading_restarts.insert(lr.num_id)
+                    {
+                        let i = self.sect_index.min(self.sects.len().saturating_sub(1));
+                        if let Some(sc) = self.sects.get_mut(i) {
+                            sc.restart_headings = true;
+                        }
+                    }
+                }
+                None => {}
+            }
+        }
         el.insert("props".into(), Value::Object(props));
         compact(&mut d);
         if let Some(st) = style_value(named, d) {
@@ -2924,6 +3081,9 @@ impl Ctx {
             }
             if let Some(st) = s.pg_start {
                 page.insert("pageNumberStart".into(), json!(st));
+            }
+            if s.restart_headings && i > 0 {
+                page.insert("restartHeadingNumbering".into(), json!(true));
             }
             if i == 0 {
                 meta.insert("page".into(), Value::Object(page));

@@ -356,7 +356,62 @@ impl Html<'_> {
                 self.out.push_str("</section>\n");
             }
             Component::Heading(p) => {
+                let hn = common::heading_numbering(self.root);
+                let tab = p.number.is_some()
+                    && hn.is_some_and(|h| {
+                        matches!(h.gap(p.level), MarkerGap::Tab | MarkerGap::Len(_))
+                    });
+                let fs = n.style.size_pt();
+                let hang = hn.map_or(0.0, |h| h.hanging_pt(p.level, fs));
+                let st = if tab {
+                    // 制表符分隔：编号放在宽 listHanging 的框里，折行的文字和第一行文字对齐
+                    let extra = format!("padding-left:{hang}pt;text-indent:-{hang}pt;");
+                    match st.find("style=\"") {
+                        Some(i) => format!("{}{extra}{}", &st[..i + 7], &st[i + 7..]),
+                        None => format!(" style=\"{extra}\"{st}"),
+                    }
+                } else {
+                    st
+                };
                 let _ = write!(self.out, "<h{l} id=\"{id}\"{st}>", l = p.level);
+                if let Some(no) = &p.number {
+                    let ms = hn
+                        .and_then(|h| h.level(p.level))
+                        .cloned()
+                        .unwrap_or_default();
+                    let mut mcss = String::new();
+                    if let Some(c) = &ms.list_marker_color {
+                        let _ = write!(mcss, "color:{};", c.css());
+                    }
+                    if let Some(f) = &ms.list_marker_font {
+                        let _ = write!(mcss, "font-family:\"{}\";", safe(f));
+                    }
+                    if let Some(pct) = ms.list_marker_size {
+                        let _ = write!(mcss, "font-size:{}em;", pct / 100.0);
+                    }
+                    if tab {
+                        let _ = write!(
+                            mcss,
+                            "display:inline-block;text-indent:0;min-width:{hang}pt;padding-right:{}pt;",
+                            fs * 0.3
+                        );
+                    }
+                    let sa = if mcss.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" style=\"{}\"", esc(&mcss))
+                    };
+                    let _ = write!(
+                        self.out,
+                        "<span class=\"document-render-heading-number\"{sa}>{}</span>{}",
+                        esc(no),
+                        if tab {
+                            ""
+                        } else {
+                            common::heading_sep(hn, p.level)
+                        }
+                    );
+                }
                 self.inline(&p.text, &n.style, &n.id);
                 let _ = writeln!(self.out, "</h{}>", p.level);
             }

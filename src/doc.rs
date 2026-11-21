@@ -551,6 +551,14 @@ impl Doc {
         self.sections(&mut node, sheet, &mut seen)?;
         let mut done = HashMap::new();
         resolve_lists(&mut node, &self.elements, &mut done)?;
+        let hn = sheet.heading_numbering();
+        if hn.any() {
+            let mut c = HeadingCounter::new(&hn);
+            c.walk(&mut node);
+        }
+        if let Component::Document(d) = &mut node.component {
+            d.heading_numbering = Some(Box::new(hn));
+        }
         let unused: Vec<_> = self
             .elements
             .keys()
@@ -760,6 +768,19 @@ impl Doc {
             .with_context(|| format!("元素 `{id}`（{}）的 props 不对", el.kind))?;
         let mut component = components::parse(&el.kind, &props)
             .with_context(|| format!("元素 `{id}`（{}）的 props 不对", el.kind))?;
+        if let (Component::Heading(_), Some(v)) = (&component, &el.style) {
+            let own = sheet
+                .resolve(v)
+                .with_context(|| format!("元素 `{id}` 的样式不对"))?;
+            if own.list_style_type.is_some()
+                || own.list_marker_format.is_some()
+                || own.list_start.is_some()
+            {
+                bail!(
+                    "元素 `{id}`：标题编号要写在 styles 的 `Heading` 或 `Heading.N` 上（listStyleType、listMarkerFormat、listStart），不能写在单个标题的 style 里；单个标题不编号写 props.numbered: false"
+                );
+            }
+        }
         let (style, parts) = sheet
             .element(el, spec, &component, parent)
             .with_context(|| format!("元素 `{id}` 的样式不对"))?;
@@ -795,6 +816,123 @@ impl Doc {
             parts,
             children,
         })
+    }
+}
+
+/// 标题编号的定义：styles（和样式集）里 `Heading`、`Heading.N` 组件样式上的编号字段，按级叠好。
+/// 只看组件样式，不看继承来的字段，免得 global 或外层元素上的 listStyleType 把标题也编上号。
+#[derive(Debug, Clone, Default)]
+pub struct HeadingNumbering {
+    /// 第 1 到 6 级；没开编号的级别是 None
+    pub levels: [Option<Style>; 6],
+}
+
+impl HeadingNumbering {
+    /// 有没有哪一级开了编号。
+    pub fn any(&self) -> bool {
+        self.levels.iter().any(Option::is_some)
+    }
+
+    /// 第 `level` 级（1 起）的定义。
+    pub fn level(&self, level: u8) -> Option<&Style> {
+        self.levels
+            .get((level as usize).wrapping_sub(1))
+            .and_then(Option::as_ref)
+    }
+
+    /// 编号类型，没写是 decimal。
+    pub fn ty(&self, level: u8) -> crate::style::ListStyleType {
+        self.level(level)
+            .and_then(|s| s.list_style_type.clone())
+            .unwrap_or(crate::style::ListStyleType::Decimal)
+    }
+
+    /// 编号模板。没写时把 1 到本级里开了编号的级别用点连起来：%1、%1.%2、%1.%2.%3。
+    pub fn format(&self, level: u8) -> String {
+        match self.level(level).and_then(|s| s.list_marker_format.clone()) {
+            Some(f) => crate::render::common::clamp_format(&f, level as usize),
+            None => (1..=level)
+                .filter(|l| self.level(*l).is_some())
+                .map(|l| format!("%{l}"))
+                .collect::<Vec<_>>()
+                .join("."),
+        }
+    }
+
+    pub fn start(&self, level: u8) -> u32 {
+        self.level(level).and_then(|s| s.list_start).unwrap_or(1)
+    }
+
+    /// 编号后的分隔：没写是空格。
+    pub fn gap(&self, level: u8) -> crate::style::MarkerGap {
+        self.level(level)
+            .and_then(|s| s.list_marker_gap)
+            .unwrap_or(crate::style::MarkerGap::Space)
+    }
+
+    /// 用制表符分隔时，文字从编号开头往右多远开始（悬挂缩进），pt。没写 listHanging 是 3 个字宽。
+    pub fn hanging_pt(&self, level: u8, fs: f32) -> f32 {
+        self.level(level)
+            .and_then(|s| s.list_hanging)
+            .map_or(fs * 3.0, |l| l.pt(fs, 0.0))
+    }
+}
+
+/// 按文档顺序给标题编号，和 Word 一样：本级加一，更深的级别回到起始号之前；
+/// 不编号的标题（numbered: false、这一级没开编号）不动计数；
+/// 从没出现过的上级按「起始号 - 1」填（Word 里先出现二级标题会显示 0.1）。
+struct HeadingCounter<'a> {
+    hn: &'a HeadingNumbering,
+    counters: [u32; 6],
+    group: usize,
+}
+
+impl<'a> HeadingCounter<'a> {
+    fn new(hn: &'a HeadingNumbering) -> Self {
+        let mut c = HeadingCounter {
+            hn,
+            counters: [0; 6],
+            group: 0,
+        };
+        c.reset(0);
+        c
+    }
+
+    /// 第 `from` 级（0 起）及更深的级别回到起始号之前。
+    fn reset(&mut self, from: usize) {
+        for i in from..6 {
+            self.counters[i] = self.hn.start(i as u8 + 1).saturating_sub(1);
+        }
+    }
+
+    fn walk(&mut self, n: &mut Node) {
+        if let Component::Section(p) = &n.component
+            && p.restart_heading_numbering == Some(true)
+            && p.layout.as_ref().is_some_and(|l| l.index > 0)
+        {
+            self.reset(0);
+            self.group += 1;
+        }
+        if let Component::Heading(h) = &mut n.component {
+            let l = h.level.clamp(1, 6);
+            if h.numbered != Some(false) && self.hn.level(l).is_some() {
+                let i = l as usize - 1;
+                self.counters[i] += 1;
+                self.reset(i + 1);
+                let types: Vec<_> = (1..=l).map(|k| self.hn.ty(k)).collect();
+                let ty = self.hn.ty(l);
+                h.number = Some(crate::render::common::fill_format(
+                    &self.hn.format(l),
+                    &self.counters[..=i],
+                    &types,
+                    crate::render::common::legal(&ty),
+                ));
+                h.number_group = self.group;
+            }
+        }
+        for c in &mut n.children {
+            self.walk(c);
+        }
     }
 }
 
