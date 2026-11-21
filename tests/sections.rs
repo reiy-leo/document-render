@@ -233,7 +233,7 @@ fn html_marks_page_format_and_column_break() {
     )
     .unwrap();
     let p = String::from_utf8(paged.bytes).unwrap();
-    assert!(p.contains("document-renderNum(x.num, x.sec.fmt)"));
+    assert!(p.contains("documentRenderNum(x.num, x.sec.fmt)"));
 }
 
 #[test]

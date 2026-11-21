@@ -181,3 +181,62 @@ fn merged_paragraph_borders_use_word_position() {
         "{src}"
     );
 }
+
+fn hf_doc(header: &str, footer: &str) -> String {
+    format!(
+        r#"{{ "meta": {{ "page": {{ "size": "A4", "margin": "72pt", "header": "h", "footer": "f" }} }},
+            "root": "d", "elements": {{ "d": {{ "type": "Document", "children": ["b"] }},
+            "b": {{ "type": "Text", "props": {{ "text": "body" }} }},
+            "h": {{ "type": "Text", "props": {{ "text": "head" }}, "style": {header} }},
+            "f": {{ "type": "Text", "props": {{ "text": "foot" }}, "style": {footer} }} }} }}"#
+    )
+}
+
+/// Word 排页脚时最后一段的段后也算：段后的下沿才对齐页脚距。以前 pdf 丢了段后，
+/// Text 默认段后 6pt 时页脚比 Word 低约 6pt（Word 2024 实测改后差 ≤0.22pt）。
+/// 页眉第一段的段前同理加在页眉距下面。
+#[test]
+fn footer_keeps_space_after_like_word() {
+    let src = typst(&hf_doc("{}", "{}"));
+    // 页脚距默认 36pt + Text 段后 6pt；用 place 贴底，内容比页边距高时往上长
+    assert!(src.contains("place(bottom, dy: -42pt"), "{src}");
+    assert!(src.contains("inset: (top: 36pt)"), "{src}");
+
+    let src = typst(&hf_doc(
+        r#"{ "spaceBefore": 10 }"#,
+        r#"{ "spaceAfter": 0 }"#,
+    ));
+    assert!(src.contains("place(bottom, dy: -36pt"), "{src}");
+    assert!(src.contains("inset: (top: 46pt)"), "{src}");
+}
+
+/// html 的页眉页脚放进页边距后不在 main 里，要自己带上根元素的字号；
+/// 再按 Word 和浏览器分行高的差别挪一下（data-shift）。
+#[test]
+fn html_header_footer_carry_font_and_shift() {
+    let out = document_render::render_str(&hf_doc("{}", "{}"), Format::Html, None).unwrap();
+    let h = String::from_utf8(out.bytes).unwrap();
+    let t = &h[h.find("data-kind=\"footer-default\"").unwrap()..];
+    assert!(t.contains("data-shift=\""), "{t}");
+    let t = &t[t.find('>').unwrap()..];
+    assert!(t.starts_with(">\n<div style=\""), "{t}");
+    assert!(
+        t[..t.find("</template>").unwrap()].contains("font-size:"),
+        "{t}"
+    );
+
+    let d = document_render::doc::parse(&hf_doc("{}", "{}")).unwrap();
+    let tree = d.tree().unwrap();
+    let paged = document_render::render::html::render(
+        &d,
+        &tree,
+        &document_render::render::Options {
+            paged: true,
+            ..Default::default()
+        },
+    );
+    let p = String::from_utf8(paged.bytes).unwrap();
+    // 函数名里不能有连字符（以前是 document-renderNum，整段脚本语法错，页眉页脚都不出）
+    assert!(!p.contains("document-renderNum"));
+    assert!(p.contains("function documentRenderNum("));
+}

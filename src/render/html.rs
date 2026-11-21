@@ -188,7 +188,7 @@ const PAGED_CSS: &str = "<style data-pagedjs-ignore>
 /// 把对应的 <template> 内容放进页面的边距里，再填好页码域。
 /// 页码按 Word 的规则自己数：每节接着上一节数，写了 data-page-start 就从那个数重新开始；
 /// data-page-fmt 是页码格式（Word 的写法，跟 Rust 里 PageNumberFormat::format 一致）。
-const PAGED_HF: &str = r#"function document-renderNum(n, fmt) {
+const PAGED_HF: &str = r#"function documentRenderNum(n, fmt) {
   if (!fmt || n < 1) return String(n);
   if (fmt === 'lowerRoman' || fmt === 'upperRoman') {
     const t = [[1000,'M'],[900,'CM'],[500,'D'],[400,'CD'],[100,'C'],[90,'XC'],[50,'L'],[40,'XL'],[10,'X'],[9,'IX'],[5,'V'],[4,'IV'],[1,'I']];
@@ -220,7 +220,7 @@ class DocumentRenderHeaders extends Paged.Handler {
   beforeParsed(content) {
     this.tpls = {};
     for (const t of content.querySelectorAll('template.document-render-hf')) {
-      this.tpls[t.dataset.section + ':' + t.dataset.kind] = t.content;
+      this.tpls[t.dataset.section + ':' + t.dataset.kind] = t;
       t.remove();
     }
   }
@@ -244,7 +244,7 @@ class DocumentRenderHeaders extends Paged.Handler {
       for (const f of root.querySelectorAll('.document-render-field')) {
         const k = f.dataset.field;
         // 跟 Word 一样，只有页码按节的格式显示，总页数和本节页数都是阿拉伯数字
-        f.textContent = k === 'page' ? document-renderNum(x.num, x.sec.fmt) : k === 'pages' ? pages.length : x.sec.count;
+        f.textContent = k === 'page' ? documentRenderNum(x.num, x.sec.fmt) : k === 'pages' ? pages.length : x.sec.count;
       }
     };
     for (const x of info) {
@@ -259,8 +259,10 @@ class DocumentRenderHeaders extends Paged.Handler {
           if (!t || !box) continue;
           const div = document.createElement('div');
           div.className = 'document-render-hf-box document-render-' + part;
-          div.style.cssText = `${pos}:${d}pt;left:${left}pt;width:${width}pt`;
-          div.appendChild(t.cloneNode(true));
+          // data-shift：把第一行（页眉）、最后一行（页脚）的基线挪到 Word 的位置，往下为正
+          const sh = +(t.dataset.shift || 0);
+          div.style.cssText = `${pos}:${part === 'header' ? +d + sh : +d - sh}pt;left:${left}pt;width:${width}pt`;
+          div.appendChild(t.content.cloneNode(true));
           box.appendChild(div);
         }
       }
@@ -573,12 +575,28 @@ impl Html<'_> {
                 let Some(node) = node.filter(|_| on) else {
                     continue;
                 };
+                let shift = hf_shift(node, part == "header");
                 let _ = writeln!(
                     self.out,
-                    "<template class=\"document-render-hf\" data-section=\"{i}\" data-kind=\"{part}-{kind}\">"
+                    "<template class=\"document-render-hf\" data-section=\"{i}\" data-kind=\"{part}-{kind}\" data-shift=\"{:.3}\">",
+                    shift
                 );
+                // 页眉页脚放到页边距里以后不在正文的 main 里，继承不到根元素的字体、字号，这里写上
+                let base = parent.map(|p| Style {
+                    font_family: p.font_family.clone(),
+                    font_size: p.font_size,
+                    color: p.color.clone(),
+                    bold: p.bold,
+                    italic: p.italic,
+                    ..Style::default()
+                });
+                let a = match &base {
+                    Some(b) => self.attr(b, None, &node.id, Ctx::Inline),
+                    None => String::new(),
+                };
+                let _ = writeln!(self.out, "<div{a}>");
                 self.node(node, parent);
-                self.out.push_str("</template>\n");
+                self.out.push_str("</div>\n</template>\n");
             }
         }
         self.children(n);
@@ -1571,6 +1589,26 @@ enum Ctx {
     ListItem,
     Table,
     Cell,
+}
+
+/// html 页眉页脚要往下挪多少（pt）才和 Word 的基线对齐：浏览器把行高多出内容区的部分上下平分，
+/// Word 按行距规则放（至少值多出来的在上面，固定值基线在 0.8 处）。页眉看第一段的第一行，
+/// 页脚看最后一段的最后一行；不是段落时不挪。
+fn hf_shift(n: &Node, header: bool) -> f32 {
+    let Some(p) = common::hf_edge_para(n, header) else {
+        return 0.0;
+    };
+    let s = &p.style;
+    let fs = s.size_pt();
+    let cjk = metrics::has_cjk(&format!("{:?}", p.component));
+    let lb = metrics::line_box(&metrics::style_line(s, cjk, None), s.line_height, fs);
+    let (a, d) = metrics::css_content(s);
+    let half = (lb.height(fs) - (a + d) * fs) / 2.0;
+    if header {
+        lb.top(fs) - (half + a * fs)
+    } else {
+        half + d * fs - lb.bottom(fs)
+    }
 }
 
 /// `line-height:…;`：固定值照写长度，其他写成字号的倍数（行盒高度 ÷ 字号）。

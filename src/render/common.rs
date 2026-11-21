@@ -976,6 +976,34 @@ fn mix_white(c: &crate::style::Color, t: f32) -> String {
     format!("#{:02x}{:02x}{:02x}", ch(0), ch(2), ch(4))
 }
 
+// ---------- 页眉页脚 ----------
+
+/// 页眉页脚开头第一段的段前（`first`）或结尾最后一段的段后，pt。Word 排页眉页脚时这两段间距都算：
+/// 页眉第一段的段前加在页眉距下面，页脚最后一段的段后垫在页脚距上面（2026-11-22 Word 2024 实测，
+/// 以前 pdf 少了段后，Text 默认段后 6pt 时页脚比 Word 低 6pt）。容器往里找第一个、最后一个子元素；
+/// 不是段落的（表格、列表、图片）算 0。
+pub(crate) fn hf_edge_space(n: &Node, first: bool) -> f32 {
+    let Some(p) = hf_edge_para(n, first) else {
+        return 0.0;
+    };
+    let s = &p.style;
+    let v = if first { s.space_before } else { s.space_after };
+    v.map_or(0.0, |x| x.pt(s.size_pt(), 0.0)).max(0.0)
+}
+
+/// 页眉页脚里第一个（`first`）或最后一个段落；容器往里找，碰到表格、列表、图片这类不是段落的是 None。
+pub(crate) fn hf_edge_para(n: &Node, first: bool) -> Option<&Node> {
+    if matches!(n.component, crate::components::Component::Document(_)) {
+        let kid = if first {
+            n.children.first()
+        } else {
+            n.children.last()
+        };
+        return kid.and_then(|k| hf_edge_para(k, first));
+    }
+    pbdr_para(n).map(|_| n)
+}
+
 // ---------- 段落边框的位置 ----------
 
 /// docx 里写成一个带 w:pBdr 段落的组件：Some(true) 是 Quote、Callout（docx 把线宽和内边距加进了

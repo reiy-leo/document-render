@@ -483,12 +483,20 @@ impl Markup<'_> {
             let saved = std::mem::take(&mut m.out);
             m.node(n, parent);
             let body = std::mem::replace(&mut m.out, saved);
-            let (inset, align) = if top {
-                (format!("(top: {dist}pt)"), "top")
+            // Word 的页眉从页眉距往下排，第一段的段前也算；页脚最后一段的段后也算，段后的下沿才对齐页脚距。
+            // Typst 在块的开头、结尾不留 above、below，所以把这两段间距加到页眉距、页脚距上。
+            // 页脚用 place 贴底：内容比页边距高时往上长（Word 也往上长，还会把正文往上挤，这个没做）
+            if top {
+                let d = dist + common::hf_edge_space(n, true);
+                format!(
+                    "block(width: 100%, height: 100%, inset: (top: {d}pt), align(top, [\n{body}]))"
+                )
             } else {
-                (format!("(bottom: {dist}pt)"), "bottom")
-            };
-            format!("block(width: 100%, height: 100%, inset: {inset}, align({align}, [\n{body}]))")
+                let d = dist + common::hf_edge_space(n, false);
+                format!(
+                    "block(width: 100%, height: 100%, place(bottom, dy: -{d}pt, block(width: 100%)[\n{body}]))"
+                )
+            }
         };
         let default = one(self, set.default.as_ref());
         let mut src = String::from("context { let i = document-render-info(); ");

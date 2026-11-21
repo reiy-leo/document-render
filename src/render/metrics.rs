@@ -218,6 +218,33 @@ pub fn family_raw(name: &str) -> Option<RawMetrics> {
     v
 }
 
+/// 浏览器排一行时的内容区：主字体（西文字体列表里第一个找得到的）的 ascent、descent，字号的倍数。
+/// Chrome 读 hhea（字体开了 USE_TYPO_METRICS 就读 typo），不含 lineGap；行高比它大的部分上下平分。
+/// Word 不平分（见 line_box），html 的页眉页脚靠它把文字挪到 Word 的位置。
+pub fn css_content(s: &Style) -> (f32, f32) {
+    let latin = s
+        .font_family
+        .as_ref()
+        .and_then(|f| f.latin.as_deref())
+        .into_iter()
+        .chain(DEFAULT_LATIN.iter().copied());
+    let raw = latin
+        .flat_map(|x| x.split(','))
+        .map(str::trim)
+        .filter(|x| !x.is_empty())
+        .find_map(family_raw)
+        .filter(|r| r.upm > 0.0);
+    let Some(r) = raw else {
+        return (FALLBACK.asc, FALLBACK.desc);
+    };
+    let (a, d) = match r.os2 {
+        Some(o) if o.use_typo => (o.typo_asc, -o.typo_desc),
+        Some(o) if r.hhea_asc == 0.0 && r.hhea_desc == 0.0 => (o.win_asc, o.win_desc),
+        _ => (r.hhea_asc, -r.hhea_desc),
+    };
+    (a / r.upm, d / r.upm)
+}
+
 /// 逗号分开的字体列表里第一个本机找得到的字体的 Word 度量。
 fn first_found<'a>(names: impl IntoIterator<Item = &'a str>) -> Option<FontMetrics> {
     names
