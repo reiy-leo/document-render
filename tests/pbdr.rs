@@ -245,21 +245,8 @@ fn docx_keeps_pbdr_on_every_paragraph_and_parse_reads_it_back() {
     assert_eq!(s.matches("一").count() + s.matches("二").count(), 2, "{s}");
     assert!(s.contains("borderBetween"), "{s}");
     let back = serde_json::to_string(&parsed.json).unwrap();
-    let again = document_render::render_str(&back, Format::Pdf, Some(Path::new(".")));
-    let again = match again {
-        Ok(o) => o,
-        // 读回的 JSON 带着 docx 的默认字体，本机没有时放行
-        Err(_) => document_render::render_with(
-            &back,
-            Format::Pdf,
-            None,
-            &document_render::Env {
-                allow_missing_fonts: true,
-                ..Default::default()
-            },
-        )
-        .unwrap(),
-    };
+    // 读回的 JSON 不带 docx 的默认字体，本机没有 Arial 也能出 pdf
+    let again = document_render::render_str(&back, Format::Pdf, Some(Path::new("."))).unwrap();
     assert!(again.bytes.starts_with(b"%PDF-"));
 }
 

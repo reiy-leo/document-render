@@ -2,8 +2,9 @@
 //!
 //! 本机字体就是 pdf 排版用的那一套：Typst 自带的字体加系统字体（见 `render::pdf::font_store`）。
 //! 规则（Rei 2026-11-21 定）：
-//! - 用户写的每个族名都要找得到，逗号分开的回退列表也是每一项都要有。中文名（宋体、微软雅黑……）
-//!   按 [`CJK_NAMES`] 换成英文族名再找。
+//! - 用户写的字体要找得到。逗号分开的回退列表只要有一个找得到就行，一个都没有才算缺，
+//!   报错时列出整条列表（Rei 2026-11-21 改，原先要求每一项都有）。列表里缺几个、但有能用的，
+//!   什么都不报。中文名（宋体、微软雅黑……）按 [`CJK_NAMES`] 换成英文族名再找。
 //! - 没写字体时用的内置默认（西文、中文、等宽各一组）是按平台挑着用的，一组里一个都找不到才算缺。
 //! - 公式字体是 Typst 自带的，不查。
 
@@ -30,6 +31,12 @@ pub const DEFAULT_CJK: &[&str] = &[
 ];
 /// Code、InlineCode 的默认等宽字体。
 pub const DEFAULT_MONO: &[&str] = &["Menlo", "Consolas", "DejaVu Sans Mono"];
+
+/// 没写字体时 docx 里写的默认西文字体（w:docDefaults 的 ascii、hAnsi、cs）。
+/// parse 读回时和它一样的西文、复杂文种字段不写进 JSON，再渲染时走内置默认字体组。
+pub const DOCX_DEFAULT_LATIN: &str = "Arial";
+/// 没写字体时 docx 里写的默认中文字体（w:docDefaults 的 eastAsia），parse 同样省略。
+pub const DOCX_DEFAULT_EAST_ASIA: &str = "PingFang SC";
 
 /// 常见中日韩字体的本地名和英文族名。parse 读回时把本地名换成英文名，查字体时两种都认。
 pub const CJK_NAMES: &[(&str, &str)] = &[
@@ -124,11 +131,13 @@ pub fn resolve(name: &str) -> Option<String> {
         .map(|(c, _)| c.to_string())
 }
 
-/// 一个找不到的字体，或者一组一个都找不到的内置默认字体。
+/// 一个找不到的字体（回退列表一个都找不到时是整条列表），或者一组一个都找不到的内置默认字体。
 #[derive(Debug, Clone)]
 pub struct Missing {
-    /// 用户写的族名；内置默认时是这组的说法，比如「默认中文字体」
+    /// 用户写的族名，回退列表是整条（`A, B`）；内置默认时是这组的说法，比如「默认中文字体」
     pub name: String,
+    /// 用户写的回退列表有几项
+    pub count: usize,
     /// 内置默认时是这一组的字体
     pub defaults: Option<&'static [&'static str]>,
     /// 用到它的元素 id，按文档顺序
@@ -153,7 +162,12 @@ impl Missing {
                 } else {
                     format!("，写在 {}", list(&self.sources, MAX_SOURCES, "个地方"))
                 };
-                format!("`{}`，用在 {ids}{src}", self.name)
+                let all = if self.count > 1 {
+                    "（列表里一个都没有）"
+                } else {
+                    ""
+                };
+                format!("`{}`{all}，用在 {ids}{src}", self.name)
             }
         }
     }
@@ -224,17 +238,18 @@ pub fn missing_with(doc: &Doc, tree: &Node, has: &dyn Fn(&str) -> bool) -> Vec<M
     c.walk(tree, &HashSet::new());
     let srcs = sources(doc);
     let mut out = Vec::new();
-    for (name, ids) in c.user {
-        if has(&name) {
+    for (names, ids) in c.user {
+        if names.iter().any(|n| has(n)) {
             continue;
         }
         let sources = srcs
             .iter()
-            .filter(|(_, v)| mentions(v, &name, false))
+            .filter(|(_, v)| mentions(v, &names, false))
             .map(|(k, _)| k.clone())
             .collect();
         out.push(Missing {
-            name,
+            name: names.join(", "),
+            count: names.len(),
             defaults: None,
             ids,
             sources,
@@ -248,6 +263,7 @@ pub fn missing_with(doc: &Doc, tree: &Node, has: &dyn Fn(&str) -> bool) -> Vec<M
         if !ids.is_empty() && !fs.iter().any(|f| has(f)) {
             out.push(Missing {
                 name: label.to_string(),
+                count: fs.len(),
                 defaults: Some(fs),
                 ids,
                 sources: Vec::new(),
@@ -267,23 +283,30 @@ fn is_default_mono(s: &str) -> bool {
     split(s).eq(DEFAULT_MONO.iter().copied())
 }
 
-/// 样式里用户写的字体名：fontFamily 各文种（内置等宽列表除外）和 listMarkerFont。
-fn style_names(s: &Style) -> Vec<String> {
-    let mut v: Vec<String> = Vec::new();
+/// 一条字体列表拆开以后的比较键（小写，逗号加空格连起来）。
+fn key(names: &[String]) -> String {
+    names.join(", ").to_lowercase()
+}
+
+/// 样式里用户写的字体列表：fontFamily 各文种（内置等宽列表除外）和 listMarkerFont，
+/// 每个字段一条（逗号分开的回退列表拆成几项），一样的只留一条。
+fn style_lists(s: &Style) -> Vec<Vec<String>> {
+    let mut v: Vec<Vec<String>> = Vec::new();
     let mut push = |x: &str| {
-        if !v.iter().any(|y| y.eq_ignore_ascii_case(x)) {
-            v.push(x.to_string());
+        let l: Vec<String> = split(x).map(str::to_string).collect();
+        if !l.is_empty() && !v.iter().any(|y| key(y) == key(&l)) {
+            v.push(l);
         }
     };
     if let Some(f) = &s.font_family {
         for slot in slots(f) {
             if !is_default_mono(slot) {
-                split(slot).for_each(&mut push);
+                push(slot);
             }
         }
     }
     if let Some(m) = &s.list_marker_font {
-        split(m).for_each(&mut push);
+        push(m);
     }
     v
 }
@@ -294,8 +317,8 @@ fn slots(f: &FontFamily) -> impl Iterator<Item = &String> {
 
 #[derive(Default)]
 struct Collector {
-    /// 用户写的字体：名字和用到它的元素，按第一次出现的顺序
-    user: Vec<(String, Vec<String>)>,
+    /// 用户写的字体列表：拆开的各项和用到它的元素，按第一次出现的顺序
+    user: Vec<(Vec<String>, Vec<String>)>,
     latin: Vec<String>,
     cjk: Vec<String>,
     mono: Vec<String>,
@@ -308,22 +331,19 @@ fn add(v: &mut Vec<String>, id: &str) {
 }
 
 impl Collector {
-    fn user_font(&mut self, name: &str, id: &str) {
-        match self
-            .user
-            .iter_mut()
-            .find(|(n, _)| n.eq_ignore_ascii_case(name))
-        {
+    fn user_font(&mut self, names: Vec<String>, id: &str) {
+        let k = key(&names);
+        match self.user.iter_mut().find(|(n, _)| key(n) == k) {
             Some((_, ids)) => add(ids, id),
-            None => self.user.push((name.to_string(), vec![id.to_string()])),
+            None => self.user.push((names, vec![id.to_string()])),
         }
     }
 
-    /// `s` 里有、`known` 里没有的用户字体记到 `id` 上。
+    /// `s` 里有、`known` 里没有的用户字体列表记到 `id` 上。
     fn names(&mut self, s: &Style, known: &HashSet<String>, id: &str) {
-        for n in style_names(s) {
-            if !known.contains(&n.to_lowercase()) {
-                self.user_font(&n, id);
+        for l in style_lists(s) {
+            if !known.contains(&key(&l)) {
+                self.user_font(l, id);
             }
         }
     }
@@ -363,10 +383,7 @@ impl Collector {
     fn walk(&mut self, n: &Node, parent: &HashSet<String>) {
         let id = n.id.as_str();
         self.names(&n.style, parent, id);
-        let known: HashSet<String> = style_names(&n.style)
-            .iter()
-            .map(|x| x.to_lowercase())
-            .collect();
+        let known: HashSet<String> = style_lists(&n.style).iter().map(|l| key(l)).collect();
         for p in n.parts.values() {
             self.names(p, &known, id);
         }
@@ -464,11 +481,16 @@ fn sources(doc: &Doc) -> Vec<(String, Value)> {
 }
 
 /// JSON 里有没有在字体字段（fontFamily、latin、eastAsia、complex、listMarkerFont，
-/// 或者 `$变量`）里写到这个名字。`in_font` 表示当前已经在字体字段里面。
-fn mentions(v: &Value, name: &str, in_font: bool) -> bool {
+/// 或者 `$变量`）里写到这条字体列表（整条一样，不分大小写）。`in_font` 表示当前已经在字体字段里面。
+fn mentions(v: &Value, names: &[String], in_font: bool) -> bool {
     match v {
-        Value::String(s) => in_font && split(s).any(|x| x.eq_ignore_ascii_case(name)),
-        Value::Array(a) => a.iter().any(|x| mentions(x, name, in_font)),
+        Value::String(s) => {
+            in_font && {
+                let l: Vec<String> = split(s).map(str::to_string).collect();
+                key(&l) == key(names)
+            }
+        }
+        Value::Array(a) => a.iter().any(|x| mentions(x, names, in_font)),
         Value::Object(m) => m.iter().any(|(k, x)| {
             let font = in_font
                 || matches!(
@@ -476,7 +498,7 @@ fn mentions(v: &Value, name: &str, in_font: bool) -> bool {
                     "fontFamily" | "latin" | "eastAsia" | "complex" | "listMarkerFont"
                 )
                 || k.starts_with('$');
-            mentions(x, name, font)
+            mentions(x, names, font)
         }),
         _ => false,
     }
@@ -501,20 +523,31 @@ mod tests {
         assert_eq!(english_name("Arial"), None);
     }
 
+    fn l(xs: &[&str]) -> Vec<String> {
+        xs.iter().map(|x| x.to_string()).collect()
+    }
+
     #[test]
     fn mentions_only_font_fields() {
-        let v = serde_json::json!({ "text": "Arial", "style": { "fontFamily": { "latin": "Inter, Arial" } } });
-        assert!(mentions(&v, "arial", false));
+        let v = serde_json::json!({ "text": "Arial", "style": { "fontFamily": { "latin": "Inter,Arial" } } });
+        assert!(mentions(&v, &l(&["inter", "arial"]), false));
+        assert!(!mentions(&v, &l(&["Arial"]), false), "整条列表一样才算");
         assert!(!mentions(
             &serde_json::json!({ "text": "Arial" }),
-            "Arial",
+            &l(&["Arial"]),
             false
         ));
         assert!(mentions(
             &serde_json::json!({ "$body": "Inter" }),
-            "Inter",
+            &l(&["Inter"]),
             false
         ));
+    }
+
+    #[test]
+    fn docx_defaults_are_in_the_default_groups() {
+        assert!(DEFAULT_LATIN.contains(&DOCX_DEFAULT_LATIN));
+        assert!(DEFAULT_CJK.contains(&DOCX_DEFAULT_EAST_ASIA));
     }
 
     #[test]

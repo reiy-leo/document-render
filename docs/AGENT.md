@@ -523,12 +523,13 @@ run 对象字段（多写会报错）：
 
 字体要装在本机（出 pdf、docx 时检查，`check` 也查）：
 
-- 自己写的字体，每个名字都要找得到。逗号分开的回退列表也是每一项都要有，有一个没装就报错。
+- 自己写的字体要找得到。逗号分开的回退列表有一个装了就行，一个都没装才报错，报错里列出整条列表。
 - 中文名（`宋体`、`微软雅黑`、`思源黑体` 这类常见字体）会换成英文族名再找，但最好直接写英文族名。
 - 不写字体时用内置默认：西文 Helvetica Neue / Arial / Liberation Sans，中文 PingFang SC / Hiragino Sans GB / Microsoft YaHei / Noto Sans CJK SC / Source Han Sans SC，代码 Menlo / Consolas / DejaVu Sans Mono。每组按系统挑着用，一组里一个都没有才报错。
 - 找的范围和 pdf 排版用的一样：系统字体加 Typst 自带字体（Libertinus Serif、New Computer Modern、DejaVu Sans Mono）。
 - docx 也查：本机没有，就没法确认打开文件的电脑有没有。确定对方有这个字体时，用 `--allow-missing-fonts`（MCP 是 `allow_missing_fonts: true`）放行，缺的字体变成警告。
 - 列表符号字体 `listMarkerFont` 也算。html、md 不查，浏览器自己回退。
+- `parse` 读回的 JSON 不带 document-render 写 docx 时的默认字体：正文默认字体里西文是 Arial、东亚是 PingFang SC 的那一项不写，再渲染走内置默认字体组。别的 docx 正文默认字体正好是 Arial 的也一样去掉。读到 Menlo 时读回整条内置等宽列表。
 | `letterSpacing` | 长度 | 字间距 |
 | `highlight` | 颜色 | 高亮 |
 | `emphasisMark` | `dot` `comma` `circle` `underDot` | 着重号 |
@@ -969,7 +970,7 @@ prop `type`：`string`（默认）`number` `integer` `boolean` `array` `object` 
 | 样式字段拼错：`"font-size"`、`"fontWeight"` | 报错 | `fontSize`、`bold: true` |
 | 颜色写 `"red"`、`"1A73E8"` | 报错 | `"#FF0000"`、`"#1A73E8"` |
 | `fontFamily` 写中文名 `"宋体"`、`"微软雅黑"` | 常见字体能认出来，冷门的找不到就报错 | 英文族名 `"SimSun"`、`"Microsoft YaHei"` |
-| 回退列表写了本机没装的字体 `"Times New Roman, Liberation Serif"` | 出 pdf、docx 时报错「本机找不到字体」 | 只写本机有的；确实要给别的电脑用，加 `--allow-missing-fonts` / `allow_missing_fonts: true` |
+| 回退列表里的字体本机一个都没装 `"Times New Roman, Liberation Serif"` | 出 pdf、docx 时报错「本机找不到 1 个字体」，列出整条列表 | 列表里加一个本机有的；确实要给别的电脑用，加 `--allow-missing-fonts` / `allow_missing_fonts: true` |
 | `lineHeight: 20` 想要 20pt | 变成 20 倍行距 | `"20pt"` |
 | Image 的 `width: "100pt"` | 报错，只收数字 | `width: 100` |
 | run 上写 `"strike": true`、`"fontSize": 12` | 报错，run 只有几个简写 | 写进 run 的 `style` |

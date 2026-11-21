@@ -36,16 +36,10 @@ fn png_image_is_embedded() {
 /// Word 实机里看到的两个问题：合计行的上边框画了两条、二级编号出成「二.1」。
 #[test]
 fn styles_example_borders_and_legal_numbering() {
-    // 样例写的是 Times New Roman、宋体这类字体，本机不一定都有
-    let env = document_render::Env {
-        allow_missing_fonts: true,
-        ..Default::default()
-    };
-    let out = document_render::render_with(
+    let out = document_render::render_str(
         include_str!("../examples/styles.json"),
         Format::Docx,
         Some(Path::new("examples")),
-        &env,
     )
     .unwrap();
     let b = &out.bytes;

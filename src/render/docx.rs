@@ -43,11 +43,12 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> anyhow::Result<Output> 
     let root = &tree.style;
     let mut docx = Docx::new()
         .default_fonts(fonts(root).unwrap_or_else(|| {
+            use crate::fonts::{DOCX_DEFAULT_EAST_ASIA, DOCX_DEFAULT_LATIN};
             RunFonts::new()
-                .ascii("Arial")
-                .hi_ansi("Arial")
-                .east_asia("PingFang SC")
-                .cs("Arial")
+                .ascii(DOCX_DEFAULT_LATIN)
+                .hi_ansi(DOCX_DEFAULT_LATIN)
+                .east_asia(DOCX_DEFAULT_EAST_ASIA)
+                .cs(DOCX_DEFAULT_LATIN)
         }))
         .default_size((root.size_pt() * 2.0).round() as usize);
     let _ = doc;
@@ -1275,7 +1276,7 @@ impl Ctx<'_> {
         if let Some(pct) = d.list_marker_size {
             level = level.size((fs * pct / 100.0 * 2.0).round() as usize);
         }
-        if let Some(f) = &d.list_marker_font {
+        if let Some(f) = d.list_marker_font.as_deref().map(first_font) {
             level = level.fonts(RunFonts::new().ascii(f).hi_ansi(f).east_asia(f).cs(f));
         }
         if common::legal(&ty) && lvl > 1 {
@@ -1500,7 +1501,7 @@ impl Ctx<'_> {
         if ms.italic == Some(true) {
             level = level.italic();
         }
-        if let Some(f) = &s.list_marker_font {
+        if let Some(f) = s.list_marker_font.as_deref().map(first_font) {
             level = level.fonts(RunFonts::new().ascii(f).hi_ansi(f).east_asia(f).cs(f));
         }
         if s.list_marker_image.is_some() {
@@ -2431,6 +2432,11 @@ impl PStyle {
 }
 
 /// 样式里的字体换成 w:rFonts；逗号分开的列表只取第一个。
+/// 回退列表的第一个字体：docx 每个文种只能写一个名字。
+fn first_font(list: &str) -> &str {
+    list.split(',').next().unwrap_or("").trim()
+}
+
 fn fonts(s: &PStyle) -> Option<RunFonts> {
     let f = s.font_family.as_ref()?;
     let first = |x: &Option<String>| {

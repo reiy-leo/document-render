@@ -7,18 +7,8 @@ use document_render::doc::Node;
 use document_render::render::Format;
 use serde_json::Value;
 
-/// 读回来的 JSON 带着 Word 里的字体（Arial、PingFang SC……），本机不一定有；这里测的是结构，缺字体只给警告。
 fn env() -> document_render::Env {
-    let mut e = document_render::load_env(Some(Path::new("examples")), &[], &[], None).unwrap();
-    e.allow_missing_fonts = true;
-    e
-}
-
-fn lenient() -> document_render::Env {
-    document_render::Env {
-        allow_missing_fonts: true,
-        ..Default::default()
-    }
+    document_render::load_env(Some(Path::new("examples")), &[], &[], None).unwrap()
 }
 
 fn to_docx(json: &str) -> Vec<u8> {
@@ -156,7 +146,7 @@ fn examples_round_trip_structure() {
         headings(&back.1, &mut b);
         assert_eq!(a, b, "{name}：标题文字对不上");
         // 解析出来的 JSON 能再渲染成 docx
-        let again = document_render::render_with(&text, Format::Docx, None, &lenient()).unwrap();
+        let again = document_render::render_str(&text, Format::Docx, None).unwrap();
         assert!(again.bytes.starts_with(b"PK"));
     }
 }
@@ -172,7 +162,7 @@ fn second_round_is_stable() {
         for (n, b) in &first.assets {
             std::fs::write(dir.join("x.assets").join(n), b).unwrap();
         }
-        let docx = document_render::render_with(&text, Format::Docx, Some(&dir), &lenient())
+        let docx = document_render::render_str(&text, Format::Docx, Some(&dir))
             .unwrap()
             .bytes;
         let second = parse(&docx);
@@ -346,7 +336,7 @@ fn images_are_exported_next_to_json() {
         "p": { "type": "Text", "props": { "text": ["前", { "image": "dot.png", "text": "行内小点", "width": 16, "height": 8 }, "后"] } }
       }
     }"##;
-    let docx = document_render::render_with(json, Format::Docx, Some(&dir), &lenient())
+    let docx = document_render::render_str(json, Format::Docx, Some(&dir))
         .unwrap()
         .bytes;
     // 替代文字写进 wp:docPr 的 descr，每张图的 id 不重复
@@ -424,7 +414,7 @@ fn page_number_formats_and_column_breaks_come_back() {
     assert_eq!(cbs, 1);
     // 再渲染回 docx，页码格式还在
     let text = serde_json::to_string(&parsed.json).unwrap();
-    let again = document_render::render_with(&text, Format::Docx, None, &lenient()).unwrap();
+    let again = document_render::render_str(&text, Format::Docx, None).unwrap();
     let x = String::from_utf8_lossy(&again.bytes);
     assert!(x.contains(r#"w:fmt="lowerRoman""#));
     assert!(x.contains(r#"w:fmt="chineseCounting""#));
@@ -484,7 +474,7 @@ fn image_alt_falls_back_to_title() {
         .unwrap();
     std::fs::rename(&tmp, dir.join("dot.png")).unwrap();
     let json = r#"{"root":"d","elements":{"d":{"type":"Document","children":["i"]},"i":{"type":"Image","props":{"src":"dot.png","width":20}}}}"#;
-    let docx = document_render::render_with(json, Format::Docx, Some(&dir), &lenient())
+    let docx = document_render::render_str(json, Format::Docx, Some(&dir))
         .unwrap()
         .bytes;
     // 没写 descr、只有 title 的图（别的软件这么存）
@@ -517,7 +507,7 @@ fn white_table_header_stays_white() {
     assert!(!x.contains("F3F3F3"), "docx 不该有灰底");
     assert!(x.contains("DDEEFF"));
     assert!(x.contains("<w:tblHeader"), "表头跨页重复");
-    let h = document_render::render_with(WHITE_HEADER, Format::Html, None, &lenient()).unwrap();
+    let h = document_render::render_str(WHITE_HEADER, Format::Html, None).unwrap();
     let h = String::from_utf8(h.bytes).unwrap();
     assert!(!h.to_uppercase().contains("F3F3F3"), "html 不该有灰底");
     assert!(h.to_uppercase().contains("DDEEFF"));
@@ -533,7 +523,7 @@ fn white_table_header_stays_white() {
     assert_eq!(t["parts"]["header"]["background"], "none", "{t}");
     assert_eq!(t["props"]["columns"][1]["style"]["background"], "#DDEEFF");
     let text = serde_json::to_string(&parsed.json).unwrap();
-    let again = document_render::render_with(&text, Format::Docx, None, &lenient()).unwrap();
+    let again = document_render::render_str(&text, Format::Docx, None).unwrap();
     let again = String::from_utf8_lossy(&again.bytes);
     assert!(!again.contains("F3F3F3"));
     assert!(again.contains("<w:tblHeader"));
@@ -601,7 +591,7 @@ fn word_auto_line_spacing_comes_back_as_multiple() {
     assert!(!text.contains(r#""lineHeight":{"multiple":1.5}"#), "{text}");
     // 第二轮不变
     let again = parse(
-        &document_render::render_with(&text, Format::Docx, None, &lenient())
+        &document_render::render_str(&text, Format::Docx, None)
             .unwrap()
             .bytes,
     );
@@ -631,4 +621,61 @@ fn doc_grid_lines_warns() {
     // 没有 type 的 docGrid（Word 默认）不警告
     let plain = parse(&to_docx(json));
     assert!(!plain.warnings.iter().any(|w| w.contains("docGrid")));
+}
+
+/// 读回字体时，和我们 docx 默认字体（Arial、PingFang SC）一样的文种不写进 JSON，
+/// 再渲染走内置默认字体组；本机没有 Arial 也能出 pdf。
+#[test]
+fn docx_default_fonts_are_not_read_back() {
+    use document_render::fonts::{DOCX_DEFAULT_EAST_ASIA, DOCX_DEFAULT_LATIN};
+    let json = r#"{"root":"d","elements":{"d":{"type":"Document","children":["h","a","c"]},"h":{"type":"Heading","props":{"text":"标题 Title","level":1}},"a":{"type":"Text","props":{"text":["中文 abc ",{"type":"InlineCode","text":"x = 1"}]}},"c":{"type":"Code","props":{"code":"let x = 1;"}}}}"#;
+    let docx = to_docx(json);
+    let parsed = parse(&docx);
+    let text = serde_json::to_string(&parsed.json).unwrap();
+    assert!(!text.contains(DOCX_DEFAULT_LATIN), "{text}");
+    assert!(!text.contains(DOCX_DEFAULT_EAST_ASIA), "{text}");
+    // 代码读回整条内置等宽列表，不是单独一个 Menlo
+    assert!(!text.contains(r#""Menlo""#), "{text}");
+    // 往返 pdf 不再因为缺字体失败：默认字体组一组有一个就行
+    let (d, t) = document_render::prepare(&text, &env()).unwrap();
+    let only_linux = |n: &str| {
+        matches!(
+            n,
+            "Liberation Sans" | "Noto Sans CJK SC" | "DejaVu Sans Mono"
+        )
+    };
+    let miss = document_render::fonts::missing_with(&d, &t, &only_linux);
+    assert!(miss.is_empty(), "{miss:?}\n{text}");
+    let pdf = document_render::render_str(&text, Format::Pdf, None).unwrap();
+    assert!(pdf.bytes.starts_with(b"%PDF-"));
+    // 第二轮一样
+    let again = parse(
+        &document_render::render_str(&text, Format::Docx, None)
+            .unwrap()
+            .bytes,
+    );
+    assert_eq!(parsed.json, again.json);
+}
+
+/// 只去掉和默认一样的那个文种；别的字体、以及在别的字体下面显式写回 Arial 的地方照样读回。
+#[test]
+fn only_the_matching_default_slot_is_dropped() {
+    let json = r#"{"root":"d","elements":{
+      "d":{"type":"Document","style":{"fontFamily":{"latin":"Libertinus Serif"}},"children":["a","b"]},
+      "a":{"type":"Text","props":{"text":"中文 abc"}},
+      "b":{"type":"Text","props":{"text":"abc"},"style":{"fontFamily":{"latin":"Arial"}}}
+    }}"#;
+    let parsed = parse(&to_docx(json));
+    let doc = &parsed.json["styles"]["Document"]["fontFamily"];
+    // 西文是 Libertinus Serif，留着；东亚没写，docx 里是根上的西文字体（不是默认的 PingFang SC），也留着
+    assert_eq!(doc["latin"], "Libertinus Serif", "{}", parsed.json);
+    assert!(
+        doc.get("eastAsia").is_none_or(|v| v != "PingFang SC"),
+        "{doc}"
+    );
+    let text = serde_json::to_string(&parsed.json["elements"]).unwrap();
+    assert!(
+        text.contains(r#""latin":"Arial""#) || text.contains(r#""fontFamily":"Arial""#),
+        "{text}"
+    );
 }

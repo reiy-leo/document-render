@@ -68,24 +68,70 @@ fn allow_missing_fonts_turns_it_into_a_warning() {
     }
 }
 
-#[test]
-fn every_name_in_a_fallback_list_must_exist() {
-    // Libertinus Serif 是 Typst 自带的，哪台机器都有；列表里另一个没有，照样报错，只报缺的那个
-    let json = format!(
+fn fallback_doc(list: &str) -> String {
+    format!(
         r#"{{ "root": "doc", "elements": {{
           "doc": {{ "type": "Document", "children": ["a"] }},
-          "a": {{ "type": "Text", "props": {{ "text": "abc" }}, "style": {{ "fontFamily": "Libertinus Serif, {MISSING}" }} }}
+          "a": {{ "type": "Text", "props": {{ "text": "abc" }}, "style": {{ "fontFamily": "{list}" }} }}
         }} }}"#
-    );
+    )
+}
+
+#[test]
+fn fallback_list_passes_when_one_name_exists() {
+    // Libertinus Serif 是 Typst 自带的，哪台机器都有；列表里另一个没有也不报错，也不给警告
+    for list in [
+        format!("Libertinus Serif, {MISSING}"),
+        format!("{MISSING}, Libertinus Serif"),
+    ] {
+        let json = fallback_doc(&list);
+        for f in [Format::Pdf, Format::Docx] {
+            let out = document_render::render_str(&json, f, None)
+                .unwrap_or_else(|e| panic!("{list} {f:?}：{e:#}"));
+            assert!(
+                !out.warnings.iter().any(|w| w.contains(MISSING)),
+                "{list} {f:?}：{:?}",
+                out.warnings
+            );
+        }
+        let (d, tree) = document_render::prepare(&json, &Env::default()).unwrap();
+        assert!(document_render::check_fonts(&d, &tree).is_empty(), "{list}");
+    }
+}
+
+#[test]
+fn fallback_list_fails_when_no_name_exists() {
+    let other = "DR Missing Font Yy";
+    let json = fallback_doc(&format!("{MISSING},{other}"));
     let e = format!(
         "{:#}",
         document_render::render_str(&json, Format::Pdf, None)
             .err()
             .unwrap()
     );
-    assert!(e.contains(MISSING) && e.contains("元素 a 的 style"), "{e}");
-    assert!(!e.contains("`Libertinus Serif`"), "{e}");
+    // 整条列表一行，带元素 id 和样式键
     assert!(e.contains("找不到 1 个字体"), "{e}");
+    assert!(
+        e.contains(&format!("`{MISSING}, {other}`（列表里一个都没有）")),
+        "{e}"
+    );
+    assert!(e.contains("`a`") && e.contains("元素 a 的 style"), "{e}");
+    // check 一样
+    let (d, tree) = document_render::prepare(&json, &Env::default()).unwrap();
+    let msgs = document_render::check_fonts(&d, &tree);
+    assert_eq!(msgs.len(), 1, "{msgs:?}");
+    assert!(
+        msgs[0].contains(other) && msgs[0].contains("元素 a 的 style"),
+        "{msgs:?}"
+    );
+    // 放行时一条警告
+    let out = document_render::render_with(&json, Format::Docx, None, &lenient()).unwrap();
+    let w: Vec<&String> = out
+        .warnings
+        .iter()
+        .filter(|w| w.contains(MISSING))
+        .collect();
+    assert_eq!(w.len(), 1, "{:?}", out.warnings);
 }
 
 #[test]

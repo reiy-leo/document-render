@@ -5,12 +5,7 @@
 use document_render::{Env, render::Format};
 
 fn render(json: &str, f: Format) -> Vec<u8> {
-    // 测的是列表，不管本机有没有样例里的字体
-    let env = Env {
-        allow_missing_fonts: true,
-        ..Env::default()
-    };
-    document_render::render_with(json, f, None, &env)
+    document_render::render_with(json, f, None, &Env::default())
         .unwrap_or_else(|e| panic!("{f:?}: {e:#}"))
         .bytes
 }
@@ -289,7 +284,7 @@ fn numbering_levels_follow_schema_order() {
             "一",
             { "text": "二", "items": [{ "text": "二.1", "items": ["深"] }, "二.2"] }
           ] },
-          "style": { "listMarkerColor": "#CF222E", "listMarkerFont": "SimHei", "listMarkerGap": "space" },
+          "style": { "listMarkerColor": "#CF222E", "listMarkerFont": "SimHei, Libertinus Serif", "listMarkerGap": "space" },
           "parts": {
             "marker": { "bold": true },
             "level2": { "listStyleType": "decimal", "listMarkerFormat": "%1.%2" }

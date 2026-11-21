@@ -110,8 +110,13 @@ pub fn highlight_color(name: &str) -> Option<Color> {
 }
 
 /// 中文字体名换成英文族名。认识的换掉，不认识但带非 ASCII 字符的原样留着并给警告。
+/// 内置等宽列表的第一个（Menlo）换成整条列表。
 pub fn english_font(name: &str, warns: &mut Warns) -> String {
     let n = name.trim();
+    // 内置等宽列表的第一个（docx 里代码只写得下它）读回整条列表，再渲染时走内置等宽字体组
+    if n == crate::fonts::DEFAULT_MONO[0] {
+        return crate::fonts::DEFAULT_MONO.join(", ");
+    }
     if let Some(e) = crate::fonts::english_name(n) {
         return e.to_string();
     }

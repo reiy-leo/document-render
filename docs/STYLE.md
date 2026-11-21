@@ -70,12 +70,15 @@ document-render 的样式以 OOXML 为准：先把 Word、PowerPoint、Excel 能
 
 - 查哪些：样式集展开、层叠算完以后，每个元素、每个 run、每个部位、每个格子实际用的 `fontFamily`（三个文种都算），加上 `listMarkerFont`。标题、代码、列表符号、页眉页脚里的都算。
 - 在哪找：和 pdf 排版同一套字体，系统字体加 Typst 自带字体（Libertinus Serif、New Computer Modern、DejaVu Sans Mono 等）。中文名（宋体、微软雅黑、思源黑体……）按内置对照表换成英文族名再找；pdf 排版时也用换过的名字。
-- 自己写的字体：每个族名都要找得到，逗号分开的回退列表也是每一项都要有。
+- 自己写的字体：单个族名要找得到。逗号分开的回退列表有一个找得到就行，一个都没有才报错（Rei 2026-11-21 改，原来要求每一项都有）。列表里缺几个、但有能用的，不报错也不给警告，pdf 用第一个找得到的。
 - 内置默认字体：西文 Helvetica Neue、Arial、Liberation Sans；中文 PingFang SC、Hiragino Sans GB、Microsoft YaHei、Noto Sans CJK SC、Source Han Sans SC；代码 Menlo、Consolas、DejaVu Sans Mono。这是按系统挑着用的备选，一组里一个都没有才报错。哪段文字用不到某一组（比如没有中文），这一组就不查。
-- 报错是中文，每个缺的字体一行：族名、用到它的元素 id（多了只列前五个，写「等 12 处」），还有写在哪个样式键里，比如 `styles.正文`、`styleSets.formal.global`、`元素 t1 的 style`。
+- 报错是中文，每个缺的字体一行：族名（回退列表整条列出来，后面注明「列表里一个都没有」）、用到它的元素 id（多了只列前五个，写「等 12 处」），还有写在哪个样式键里，比如 `styles.正文`、`styleSets.formal.global`、`元素 t1 的 style`。
 - 放行：命令行 `--allow-missing-fonts`，MCP 的 `render`、`check` 写 `allow_missing_fonts: true`。缺的字体变成警告，照常出文件：pdf 里换成默认字体，docx 里照写字体名。
 - docx 也报错：本机没有这个字体，就没法确认打开文件的那台电脑有没有。确定对方装了，就用上面的参数放行。
 - html、Markdown 不查，浏览器自己回退。`check` 不分格式，也把缺的字体算成错误，加参数时降为警告。
+- parse 读回的 JSON：document-render 写 docx 时，没写字体就在 docDefaults 里写 Arial（西文、复杂文种）和 PingFang SC（东亚）。parse 读到正文默认字体里和这两个完全一样的那个文种，就不写进 JSON，再渲染时走上面的内置默认字体组，在没装 Arial、苹方的机器上也能出 pdf。只去掉对得上的那个文种，别的照写。别的软件做的 docx，正文默认字体正好是 Arial 的，也会这样去掉；在别的字体下面专门改回 Arial 的段落、文字照样读回。
+- parse 读字体时还有两条：一是按文种比，只写和上面传下来不一样的那个文种，不会每段都抄一遍东亚字体；二是读到 Menlo（内置等宽列表的第一个，docx 里代码只写得下它）就读回整条等宽列表 `Menlo, Consolas, DejaVu Sans Mono`，再渲染走内置等宽字体组。
+- docx 每个文种只能写一个字体名，回退列表（包括 `listMarkerFont`）只写第一个。
 
 ## 三、段落（对应 w:pPr、a:pPr、xlsx alignment）
 

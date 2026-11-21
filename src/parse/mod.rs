@@ -452,6 +452,40 @@ fn expand(m: &mut Map<String, Value>) {
 }
 
 /// 四边一样时合回 `border`、`padding`；三个文种一样的字体写成一个名字。
+/// Document 样式的 fontFamily 里，和 docx 渲染默认字体（[`crate::fonts::DOCX_DEFAULT_LATIN`]、
+/// [`crate::fonts::DOCX_DEFAULT_EAST_ASIA`]）完全一样的文种去掉：西文、复杂文种对西文默认，
+/// 东亚对中文默认。去完空了就不写 fontFamily。别的文档正文默认字体正好是 Arial 的也会去掉。
+fn drop_docx_default_fonts(m: &mut Map<String, Value>) {
+    use crate::fonts::{DOCX_DEFAULT_EAST_ASIA, DOCX_DEFAULT_LATIN};
+    let Some(f) = m.get_mut("fontFamily") else {
+        return;
+    };
+    match f {
+        Value::Object(f) => {
+            for (k, d) in [
+                ("latin", DOCX_DEFAULT_LATIN),
+                ("eastAsia", DOCX_DEFAULT_EAST_ASIA),
+                ("complex", DOCX_DEFAULT_LATIN),
+            ] {
+                if f.get(k).and_then(Value::as_str) == Some(d) {
+                    f.remove(k);
+                }
+            }
+            if f.is_empty() {
+                m.remove("fontFamily");
+            }
+        }
+        // 字符串是三个文种都用它
+        Value::String(x) if x == DOCX_DEFAULT_LATIN => {
+            *f = json!({ "eastAsia": DOCX_DEFAULT_LATIN });
+        }
+        Value::String(x) if x == DOCX_DEFAULT_EAST_ASIA => {
+            *f = json!({ "latin": DOCX_DEFAULT_EAST_ASIA, "complex": DOCX_DEFAULT_EAST_ASIA });
+        }
+        _ => {}
+    }
+}
+
 fn compact(m: &mut Map<String, Value>) {
     for (all, sides) in [
         (
@@ -517,6 +551,12 @@ fn diff(
     for k in keys {
         match (eff.get(*k), exp.get(*k)) {
             (Some(a), Some(b)) if same(a, b) => {}
+            (Some(a), Some(b)) if *k == "fontFamily" => {
+                // 只写和上面不一样的文种，没写的文种照常从上面继承
+                if let Some(f) = font_diff(a, b) {
+                    out.insert(k.to_string(), f);
+                }
+            }
             (Some(a), None) => {
                 if reset(k).is_some_and(|r| same(&r, a)) {
                     continue;
@@ -540,6 +580,31 @@ fn diff(
         }
     }
     out
+}
+
+/// fontFamily 按文种比：返回 `eff` 里和 `exp` 不一样的文种，都一样是 None。
+/// document-render 写 docx 时每个文种只写回退列表的第一个，复杂文种没写就跟西文，
+/// 所以 docx 里的名字是 `exp` 列表的第一个也算一样；复杂文种和西文一样时不单写。
+/// 这样读回时不会把上面传下来的 PingFang SC 每处抄一遍。
+fn font_diff(eff: &Value, exp: &Value) -> Option<Value> {
+    let first = |v: &Value, k: &str| {
+        v.get(k)
+            .and_then(Value::as_str)
+            .and_then(|s| s.split(',').next())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let mut out = Map::new();
+    for k in ["latin", "eastAsia", "complex"] {
+        let Some(v) = eff.get(k) else { continue };
+        let e = first(eff, k);
+        let same = e == first(exp, k) || (k == "complex" && e == first(eff, "latin"));
+        if !same {
+            out.insert(k.to_string(), v.clone());
+        }
+    }
+    (!out.is_empty()).then_some(Value::Object(out))
 }
 
 fn from_map(m: &Map<String, Value>) -> Style {
@@ -1530,10 +1595,15 @@ impl Ctx {
         let mut root = builtin("$global").cloned().unwrap_or_default();
         root.merge(&doc_style);
         self.doc_inh = root.inherited();
-        if !doc.is_empty() {
-            let mut d = doc.clone();
+        // 和我们 docx 的默认字体一样的文种不写，再渲染时走内置默认字体组；
+        // 下面的元素照样按带着它的 doc_inh 比，不会每段都写一遍
+        let mut d = doc.clone();
+        drop_docx_default_fonts(&mut d);
+        if !d.is_empty() {
             compact(&mut d);
             self.out_styles.insert("Document".into(), Value::Object(d));
+        }
+        if !doc.is_empty() {
             self.comp.insert("Document".into(), doc_style);
         }
         // Text：Normal 的段落间距这些，按多数正文段落改

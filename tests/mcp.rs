@@ -263,11 +263,8 @@ fn mcp_end_to_end() {
     let back: Value = serde_json::from_str(&std::fs::read_to_string(&json_out).unwrap()).unwrap();
     assert_eq!(&back, parsed);
 
-    // 解析出来的 JSON 能再 check 通过（里面带着 Word 的字体，本机不一定有，缺字体降为警告）
-    let (_, out) = c.call(
-        "check",
-        json!({ "document": back, "allow_missing_fonts": true }),
-    );
+    // 解析出来的 JSON 能再 check 通过：和 docx 默认一样的字体（Arial、PingFang SC）不读回，不会缺字体
+    let (_, out) = c.call("check", json!({ "document": back }));
     assert_eq!(out["ok"], true, "{out}");
 
     // 字体缺了：check 算错，render 出 docx 报错不出文件；allow_missing_fonts 降为警告

@@ -82,7 +82,7 @@ document-render 把一份 JSON 文档渲染成 docx、pdf、html，也能出 Mar
 
 pdf 用 Typst 排版，有这些不同：
 
-- 中文用系统字体：macOS 上是苹方，Linux 上是 Noto Sans CJK。默认中文字体一个都没有、或者文档写的字体本机没装，都会报错；加 `--allow-missing-fonts` 才退回默认字体照常出，中文可能显示不全。
+- 中文用系统字体：macOS 上是苹方，Linux 上是 Noto Sans CJK。默认中文字体一个都没有、或者文档写的字体本机没装（回退列表一个都没装），都会报错；加 `--allow-missing-fonts` 才退回默认字体照常出，中文可能显示不全。
 - 中文字体没有斜体，`italic` 对中文不起作用。
 - 支持 SVG；远程图片暂不支持，改成显示 alt 文字。
 - 颜色只认十六进制写法，比如 `#c00`、`#1a73e8`。
@@ -135,6 +135,8 @@ document-render parse report.docx -o out/report.json --assets img   # 图片导�
 - 大多数正文段落共用的字体、字号、行距写进 `styles` 的 `Document`；正文的段前段后、首行缩进写进 `Text`；各级标题写进 `Heading.1` 这些键。
 - 其他用到的 Word 段落样式和字符样式写成同名的命名样式（和组件名重名时前面加 `Word `），元素用 `style` 引用。
 - 字体一律写英文族名：宋体写成 SimSun，微软雅黑写成 Microsoft YaHei，主题字体换成主题里的实际字体。
+- 正文默认字体里，和我们写 docx 时的默认字体一样的那个文种不写：西文、复杂文种是 Arial，东亚是 PingFang SC。这样读回的 JSON 再渲染走内置默认字体组，没装 Arial、苹方的机器也能出 pdf。别的软件做的 docx，正文默认字体正好是 Arial 的也会去掉；在别的字体下面专门改回 Arial 的地方照样读回。
+- 字体按文种读：只写和上面传下来不一样的文种。读到 Menlo（我们写代码用的等宽字体）读回整条内置等宽列表 `Menlo, Consolas, DejaVu Sans Mono`。
 
 还不支持、会给警告的：
 
