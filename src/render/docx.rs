@@ -1622,7 +1622,12 @@ impl Ctx<'_> {
         if let Some(r) = s.rotation {
             pic = pic.rotate((r.rem_euclid(360.0)) as u16);
         }
-        let dist = units::emu(s.wrap_distance.map(|d| d.abs_pt()).unwrap_or(6.0)) as i32;
+        // 上、右、下、左
+        let dist = s
+            .wrap_distance
+            .map(|d| d.sides_pt())
+            .unwrap_or([crate::style::WrapDistance::DEFAULT_PT; 4])
+            .map(|x| units::emu(x) as i32);
         match s.position.unwrap_or(Position::Inline) {
             Position::Inline => {}
             Position::Float => {
@@ -1637,10 +1642,10 @@ impl Ctx<'_> {
                         },
                     ))
                     .position_v(DrawingPosition::Offset(0))
-                    .dist_t(dist)
-                    .dist_b(dist)
-                    .dist_l(dist)
-                    .dist_r(dist);
+                    .dist_t(dist[0])
+                    .dist_b(dist[2])
+                    .dist_l(dist[3])
+                    .dist_r(dist[1]);
             }
             Position::Absolute => {
                 let (rh, rv) = match s.anchor_to.unwrap_or(AnchorTo::Page) {

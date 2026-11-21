@@ -920,7 +920,11 @@ impl Html<'_> {
         fig.opacity = None;
         fig.object_fit = None;
         let mut css = self.css(&fig, parent, &n.id, Ctx::Block);
-        let dist = s.wrap_distance.map(|d| d.abs_pt()).unwrap_or(6.0);
+        // 上、右、下、左
+        let dist = s
+            .wrap_distance
+            .map(|d| d.sides_pt())
+            .unwrap_or([crate::style::WrapDistance::DEFAULT_PT; 4]);
         match s.position.unwrap_or(Position::Inline) {
             Position::Inline => {
                 if let Some(a) = s.horizontal_align {
@@ -929,15 +933,20 @@ impl Html<'_> {
             }
             Position::Float => {
                 let side = s.float.unwrap_or(Side::Left);
-                let (m1, m2) = match side {
-                    Side::Left => ("right", "left"),
-                    Side::Right => ("left", "right"),
+                // 靠文字那一边留间距，贴边那一边是 0；上下只在写了 wrapDistance 时给，
+                // 免得盖掉 spaceBefore、spaceAfter
+                let (m1, d1, m2) = match side {
+                    Side::Left => ("right", dist[1], "left"),
+                    Side::Right => ("left", dist[3], "right"),
                 };
                 let _ = write!(
                     css,
-                    "float:{};margin-{m1}:{dist}pt;margin-{m2}:0;",
+                    "float:{};margin-{m1}:{d1}pt;margin-{m2}:0;",
                     side.as_str()
                 );
+                if s.wrap_distance.is_some() {
+                    let _ = write!(css, "margin-top:{}pt;margin-bottom:{}pt;", dist[0], dist[2]);
+                }
                 match s.wrap {
                     Some(Wrap::Image(WrapMode::TopAndBottom)) => {
                         css = css.replace(&format!("float:{};", side.as_str()), "");

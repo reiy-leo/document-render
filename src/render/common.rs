@@ -63,14 +63,31 @@ impl Warn {
 
 // ---------- 列表 ----------
 
-/// 一级列表的样式：元素样式叠上 `levelN` 部位；哪里都没写编号类型时，按层级轮换默认类型。
+/// 一级列表的样式。
+///
+/// 规则：元素样式管所有级别，但「编号长什么样」的字段（`listStyleType`、`listMarkerFormat`、
+/// `listMarkerImage`、`listMarkerFont`、`listStart`）写在元素样式上时只算第一级；
+/// 第二级起只认自己的 `levelN` 部位，没写就按级别取默认。这样元素样式上写一个 `decimal`，
+/// 下级不会也变成数字，更不会把 `%1.` 这类模板套到下级上。
 pub fn list_level_style(n: &Node, level: usize, ordered: bool) -> Style {
     let mut s = n.style.clone();
+    if level > 1 {
+        clear_marker_fields(&mut s);
+    }
     s.merge(&n.part(&format!("level{level}")));
     if s.list_style_type.is_none() {
         s.list_style_type = Some(default_type(level, ordered));
     }
     s
+}
+
+/// 只管第一级的那几个列表字段清空。
+pub fn clear_marker_fields(s: &mut Style) {
+    s.list_style_type = None;
+    s.list_marker_format = None;
+    s.list_marker_image = None;
+    s.list_marker_font = None;
+    s.list_start = None;
 }
 
 pub fn default_type(level: usize, ordered: bool) -> ListStyleType {
@@ -128,17 +145,16 @@ fn walk<'a>(
     types.push(ty.clone());
     for it in items {
         counters[level - 1] += 1;
-        let marker = if let Some(b) = ty.bullet().filter(|_| !ty.ordered()) {
-            match &style.list_marker_format {
-                Some(f) => fill_format(f, counters, types, false),
-                None => b,
+        // 符号类的级别不用 listMarkerFormat，只出符号
+        let marker = match ty.bullet().filter(|_| !ty.ordered()) {
+            Some(b) => b,
+            None => {
+                let f = style
+                    .list_marker_format
+                    .clone()
+                    .unwrap_or_else(|| format!("%{level}."));
+                fill_format(&f, counters, types, legal(&ty))
             }
-        } else {
-            let f = style
-                .list_marker_format
-                .clone()
-                .unwrap_or_else(|| format!("%{level}."));
-            fill_format(&f, counters, types, legal(&ty))
         };
         out.push(ListLine {
             level,
@@ -172,33 +188,69 @@ pub fn legal(ty: &ListStyleType) -> bool {
     )
 }
 
-/// `%1.%2` 里的 %k 换成第 k 级的编号。`legal` 为真时上几级一律用这一级的数字写法。
+/// `%1.%2` 里的 %k 换成第 k 级的编号（和 Word 的 lvlText 一样，%1 是第一级）。
+/// `legal` 为真时上几级一律用这一级的数字写法。%k 指向比本级还深的级别时没有编号可填，直接去掉，
+/// 不会把模板文字原样留下。
 fn fill_format(f: &str, counters: &[u32], types: &[ListStyleType], legal: bool) -> String {
-    let mut out = f.to_string();
     let own = types.last();
-    for k in (1..=counters.len()).rev() {
-        let pat = format!("%{k}");
-        if out.contains(&pat) {
-            let ty = match own {
-                Some(t) if legal => t,
-                _ => &types[k - 1],
-            };
-            out = out.replace(&pat, &ty.number(counters[k - 1]));
+    let mut out = String::new();
+    let mut chars = f.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '%'
+            && let Some(k) = chars
+                .peek()
+                .and_then(|d| d.to_digit(10))
+                .filter(|k| *k >= 1)
+        {
+            chars.next();
+            let k = k as usize;
+            if k <= counters.len() {
+                let ty = match own {
+                    Some(t) if legal => t,
+                    _ => &types[k - 1],
+                };
+                out.push_str(&ty.number(counters[k - 1]));
+            }
+            continue;
         }
+        out.push(c);
     }
     out
 }
 
-/// Word lvlText 的写法：`%1.` 原样，符号直接写。
+/// 把模板里指向比 `level` 深的 %k 去掉（Word 的 lvlText 只能引用本级和上级）。
+pub fn clamp_format(f: &str, level: usize) -> String {
+    let mut out = String::new();
+    let mut chars = f.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '%'
+            && let Some(k) = chars
+                .peek()
+                .and_then(|d| d.to_digit(10))
+                .filter(|k| *k >= 1)
+        {
+            chars.next();
+            if k as usize <= level {
+                out.push('%');
+                out.push_str(&k.to_string());
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Word lvlText 的写法：符号级别直接写符号（不用 listMarkerFormat），编号级别用模板，
+/// 没写模板时是 `%N.`。
 pub fn word_level_text(style: &Style, level: usize) -> String {
     let ty = style.list_style_type.clone().unwrap_or(ListStyleType::Disc);
-    match (
-        &style.list_marker_format,
-        ty.bullet().filter(|_| !ty.ordered()),
-    ) {
-        (Some(f), _) => f.clone(),
-        (None, Some(b)) => b,
-        (None, None) => format!("%{level}."),
+    match ty.bullet().filter(|_| !ty.ordered()) {
+        Some(b) => b,
+        None => match &style.list_marker_format {
+            Some(f) => clamp_format(f, level),
+            None => format!("%{level}."),
+        },
     }
 }
 

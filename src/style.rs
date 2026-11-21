@@ -477,6 +477,74 @@ impl Wrap {
 
 value_type!(Wrap, "Wrap", { "anyOf": [{ "type": "boolean" }, { "enum": ["square", "tight", "topAndBottom", "none", "behind", "inFront"] }] });
 
+/// `wrapDistance`：浮动图片和文字之间的距离。一个长度管四边，
+/// 或写 `{ top, right, bottom, left }` 分开给，没写的边用默认的 6pt。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WrapDistance {
+    All(Len),
+    Sides([Option<Len>; 4]),
+}
+
+impl WrapDistance {
+    const SIDES: [&'static str; 4] = ["top", "right", "bottom", "left"];
+    /// 没写时的图文间距
+    pub const DEFAULT_PT: f32 = 6.0;
+
+    fn from_value(v: &Value) -> Result<WrapDistance> {
+        match v {
+            Value::Object(m) => {
+                if let Some(k) = m.keys().find(|k| !Self::SIDES.contains(&k.as_str())) {
+                    bail!("wrapDistance 的四边只认 top right bottom left，不认识 `{k}`");
+                }
+                let mut sides = [None; 4];
+                for (i, k) in Self::SIDES.iter().enumerate() {
+                    if let Some(x) = m.get(*k) {
+                        sides[i] = Some(Len::from_value(x)?);
+                    }
+                }
+                Ok(WrapDistance::Sides(sides))
+            }
+            _ => Len::from_value(v).map(WrapDistance::All).map_err(|_| {
+                anyhow::anyhow!("wrapDistance 要写长度，或四边 {{ top, right, bottom, left }}")
+            }),
+        }
+    }
+
+    fn to_value(self) -> Value {
+        match self {
+            WrapDistance::All(l) => l.to_value(),
+            WrapDistance::Sides(s) => {
+                let mut m = serde_json::Map::new();
+                for (i, k) in Self::SIDES.iter().enumerate() {
+                    if let Some(l) = s[i] {
+                        m.insert((*k).into(), l.to_value());
+                    }
+                }
+                Value::Object(m)
+            }
+        }
+    }
+
+    /// 四边的 pt：上、右、下、左。
+    pub fn sides_pt(self) -> [f32; 4] {
+        match self {
+            WrapDistance::All(l) => [l.abs_pt(); 4],
+            WrapDistance::Sides(s) => s.map(|x| x.map_or(Self::DEFAULT_PT, Len::abs_pt)),
+        }
+    }
+}
+
+value_type!(WrapDistance, "WrapDistance", { "anyOf": [
+    { "type": "number" },
+    { "type": "string", "pattern": "^-?[0-9.]+(pt|mm|cm|in|px|em|line|%)?$" },
+    { "type": "object", "properties": {
+        "top": { "anyOf": [{ "type": "number" }, { "type": "string", "pattern": "^-?[0-9.]+(pt|mm|cm|in|px|em|line|%)?$" }] },
+        "right": { "anyOf": [{ "type": "number" }, { "type": "string", "pattern": "^-?[0-9.]+(pt|mm|cm|in|px|em|line|%)?$" }] },
+        "bottom": { "anyOf": [{ "type": "number" }, { "type": "string", "pattern": "^-?[0-9.]+(pt|mm|cm|in|px|em|line|%)?$" }] },
+        "left": { "anyOf": [{ "type": "number" }, { "type": "string", "pattern": "^-?[0-9.]+(pt|mm|cm|in|px|em|line|%)?$" }] }
+    }, "additionalProperties": false }
+] });
+
 // ---------- 行高 ----------
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1220,7 +1288,7 @@ pub struct Style {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub float: Option<Side>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub wrap_distance: Option<Len>,
+    pub wrap_distance: Option<WrapDistance>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anchor_to: Option<AnchorTo>,
     #[serde(skip_serializing_if = "Option::is_none")]

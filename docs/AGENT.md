@@ -190,9 +190,15 @@ run 对象的字段见 3.17。
 
 子项对象只认 `text`、`items`、`ordered`；`ordered` 不写跟上一级一样。
 
-每一级的样式按「元素 `style` + `parts.levelN`」算：元素 `style` 管所有级别，`parts.level2` 只管第 2 级。所以编号类型、编号模板这类按级不同的字段写在 `parts.levelN` 里，别写在元素 `style` 上，否则下级也会用。某一级没写 `listStyleType` 时按级别取默认：有序依次 `decimal` `lower-alpha` `lower-roman`，无序依次 `disc` `circle` `square`，三级一轮。
+每一级的样式按「元素 `style` + `parts.levelN`」算，规则是：
 
-`listMarkerFormat` 里 `%k` 是第 k 级的编号：二级写 `"%2)"` 或 `"%1.%2"`，不是 `"%1"`。
+- 元素 `style` 上的大多数字段管所有级别，比如 `listMarkerColor`、`listIndent`、文字字段。
+- 决定编号长什么样的五个字段只管第一级：`listStyleType`、`listMarkerFormat`、`listMarkerImage`、`listMarkerFont`、`listStart`。写在元素 `style` 上，就等于写在 `parts.level1` 上。
+- 第二级起，这五个字段只看自己的 `parts.levelN`；没写就用这一级的默认：编号类型有序依次 `decimal` `lower-alpha` `lower-roman`，无序依次 `disc` `circle` `square`，三级一轮；模板是 `"%N."`；从 1 开始。
+
+所以元素 `style` 上写 `"listStyleType": "decimal"`，只有第一级是数字，下级照常是 a. b. 或圆点。想改下级，就写 `parts.level2`、`parts.level3`。
+
+`listMarkerFormat` 里 `%k` 是第 k 级的编号，和 Word 一样：二级写 `"%2)"` 或 `"%1.%2"`，写 `"%1"` 会显示一级的编号。指向更深级别的 `%k`（一级里写 `%2`）没有编号可填，会被去掉。符号级别（`disc`、`"▸"` 这类）不用 `listMarkerFormat`，写了也不管，只显示符号。
 
 ```json
 "steps": {
@@ -493,7 +499,7 @@ run 对象字段（多写会报错）：
 | `position` | `inline`（默认）`float` `absolute` | |
 | `float` | `left` `right` | 浮动方向 |
 | `wrap` | `square` `tight` `topAndBottom` `none` `behind` `inFront` | 绕排 |
-| `wrapDistance` | 长度 | 图文间距（只有一个值） |
+| `wrapDistance` | 长度，或 `{ "top", "right", "bottom", "left" }` | 图文间距，默认 6pt；四边写法里没写的边也是 6pt |
 | `anchorTo` | `paragraph` `margin` `page` `slide` | 定位参照 |
 | `x` `y` | 长度 | 相对参照的偏移 |
 | `horizontalAlign` | `left` `center` `right` | |
@@ -504,10 +510,12 @@ run 对象字段（多写会报错）：
 
 ### 4.6 列表（写在 List 的 `style` 或 `parts.levelN` 上）
 
+`listStyleType`、`listMarkerFormat`、`listMarkerImage`、`listMarkerFont`、`listStart` 写在元素 `style` 上只管第一级，其余列表字段管所有级别（见 3.7）。
+
 | 字段 | 取值 | 说明 |
 |---|---|---|
 | `listStyleType` | 无序 `disc` `circle` `square` `dash` `none`；有序 `decimal` `decimal-leading-zero` `lower-alpha` `upper-alpha` `lower-roman` `upper-roman` `cjk-decimal`（一二三） `cjk-ideographic`（甲乙丙） `circled-decimal`（①②③）；或 1–3 个字符当符号，如 `"▸"` | |
-| `listMarkerFormat` | 字符串 | 编号模板，`%k` 是第 k 级编号：一级 `"%1."` `"(%1)"` `"第%1条"`，二级 `"%2)"` `"%1.%2"` |
+| `listMarkerFormat` | 字符串 | 编号模板，`%k` 是第 k 级编号：一级 `"%1."` `"(%1)"` `"第%1条"`，二级 `"%2)"` `"%1.%2"`；符号级别不用 |
 | `listMarkerImage` | 路径 | 图片当符号 |
 | `listMarkerColor` | 颜色 | |
 | `listMarkerFont` | 字体名 | 如 `Wingdings` |
@@ -516,7 +524,7 @@ run 对象字段（多写会报错）：
 | `listMarkerGap` | 长度，或 `tab` `space` `none` | 编号和正文之间 |
 | `listIndent` | 长度 | 每级缩进，逐级累加，默认 `2em` |
 | `listHanging` | 长度 | 编号区宽度，默认 `2em` |
-| `listStart` | 整数 | 起始编号，不继承 |
+| `listStart` | 整数 | 起始编号，不继承；写在元素 `style` 上只管第一级 |
 
 注意：不在名单里、又不超过 3 个字符的字符串会被当成项目符号（写 `"abc"` 就显示 abc）。
 
@@ -872,7 +880,8 @@ prop `type`：`string`（默认）`number` `integer` `boolean` `array` `object` 
 | 页眉页脚里放 PageBreak/Section | 报错 | 页眉页脚只放文字类元素 |
 | 封面节写 `"first": null`，正文节只写 `"header": "hdr"` | 正文首页没有页眉（`first` 沿用了） | 正文节写 `{ "default": "hdr", "first": "hdr" }` |
 | 表格写了 `parts.lastRow`/`lastColumn` 但没开 `look` | 不报错，样式不生效 | `"look": { "lastRow": true }` |
-| 把 `listStyleType`/`listMarkerFormat` 写在 List 的 `style` 上 | 所有级别都用它，二级显示一级的编号（docx 里符号列表还会显示字面的模板） | 写进 `parts.level1`、`parts.level2` |
+| 想让各级都用同一种编号，只在 List 的 `style` 上写 `listStyleType` | 只有第一级变，下级还是默认的 a. b. 或圆点 | 每级写进 `parts.levelN` |
+| 二级的 `listMarkerFormat` 写成 `"%1."` | 二级每项都显示一级的编号（`%1` 是第一级） | 写 `"%2."` 或 `"%1.%2"` |
 | 长度写 `"2字符"`、`"10 pt"` 以外的怪单位 | 报错 | 单位只认 `pt mm cm in px em line %` |
 | `listStyleType: "roman"` | 报错；而 `"abc"`（≤3 字符）会被当成符号 | `"lower-roman"` |
 | 顶层多写 `title`、`page` | 报错 | 放进 `meta`、`meta.page` |

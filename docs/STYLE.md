@@ -220,7 +220,7 @@ Word 的列表定义在 numbering.xml：`w:abstractNum` 下每一级一个 `w:lv
 | 字段 | 值 | Word w:lvl | PPT a:pPr | HTML | PDF |
 |---|---|---|---|---|---|
 | `listStyleType` | 无序：`disc` `circle` `square` `dash` `none`，或任意字符如 `"▸"`；有序：`decimal` `decimal-leading-zero` `lower-alpha` `upper-alpha` `lower-roman` `upper-roman` `cjk-decimal`（一、二、三） `cjk-ideographic`（甲、乙、丙） `circled-decimal`（①②③） | w:numFmt（bullet、decimal、decimalZero、lowerLetter、upperLetter、lowerRoman、upperRoman、chineseCounting、ideographTraditional、decimalEnclosedCircle） + w:lvlText | a:buChar / a:buAutoNum type（arabicPeriod、alphaLcParenR、romanUcPeriod、circleNumDbPlain、ea1ChsPeriod …） | list-style-type | list marker / enum numbering |
-| `listMarkerFormat` | 编号的模板，`%1` 是本级编号：`"%1."` `"(%1)"` `"第%1条"`；多级 `"%1.%2"`；本级是 `decimal` 时上几级也写成阿拉伯数字（上级「一、」，本级出「2.1」） | w:lvlText（+ w:isLgl） | 只能从 buAutoNum 的固定几种里选，选不到就退成 `%1.` | ::marker content / counters() | enum numbering 函数 |
+| `listMarkerFormat` | 编号的模板，`%k` 是第 k 级的编号，和 Word 一样：一级 `"%1."` `"(%1)"` `"第%1条"`，二级 `"%2)"` `"%1.%2"`；指向更深级别的 `%k` 没有编号可填，去掉；本级是 `decimal` 时上几级也写成阿拉伯数字（上级「一、」，本级出「2.1」）；符号级别不用模板 | w:lvlText（+ w:isLgl） | 只能从 buAutoNum 的固定几种里选，选不到就退成 `%1.` | ::marker content / counters() | enum numbering 函数 |
 | `listMarkerImage` | 图片路径，当项目符号 | w:lvlPicBulletId | a:buBlip | list-style-image | marker 里放 image |
 | `listMarkerColor` | 颜色 | w:lvl 的 w:rPr color | a:buClr | ::marker color | marker 用 text fill |
 | `listMarkerFont` | 字体名（Wingdings 这类符号字体） | w:lvl 的 w:rFonts | a:buFont | ::marker font-family | — |
@@ -231,7 +231,19 @@ Word 的列表定义在 numbering.xml：`w:abstractNum` 下每一级一个 `w:lv
 | `listHanging` | 编号区宽度，就是悬挂缩进 | w:ind hanging | indent（负数） | 负 text-indent | 用 body-indent 近似 |
 | `listStart` | 有序列表从几开始 | w:start | buAutoNum startAt | start 属性 | enum start |
 
-多级列表：List 的 props 里 items 可以嵌套；每一级的样式写在 `List.level2`、`List.level3` 这样的组件样式键下（见第十一节），没写的级别沿用上一级，`listIndent` 每级自动累加。
+多级列表：List 的 props 里 items 可以嵌套，每一级的样式是「元素样式 + `levelN` 部位」。`levelN` 可以写在元素的 `parts` 里，也可以写成 `List.level2` 这样的组件样式键（见第十一节）。`listIndent` 每级自动累加。
+
+决定编号长什么样的五个字段例外：`listStyleType`、`listMarkerFormat`、`listMarkerImage`、`listMarkerFont`、`listStart` 写在元素样式上只管第一级。第二级起它们只看自己的 `levelN`，没写就用这一级的默认：
+
+- 编号类型：有序依次 `decimal` `lower-alpha` `lower-roman`，无序依次 `disc` `circle` `square`，三级一轮。这一级有序还是无序看 items 里的 `ordered`，没写跟上一级。
+- 模板：`"%N."`（N 是这一级）。
+- 起始：1。符号字体、图片符号：不用。
+
+这样元素样式上写个 `decimal` 或 `"%1、"`，下级不会跟着变成「1、」「1、」，Word 里符号子层也不会把 `%2` 这类模板原样显示出来。其余列表字段（颜色、字号、对齐、间距、缩进）照旧管所有级别。
+
+符号级别（`disc` `circle` `square` `dash` `none` 或自定字符）只显示符号，`listMarkerFormat` 写了也不用。Word 的 lvlText 在符号级别就是符号本身。
+
+Word 里一个列表的每一级只有一份定义。同一级下，有的子列表有序、有的无序时，docx 按这一级第一次出现的子列表写，html 和 pdf 各按各的。
 
 ## 八、图片位置（对应 wp:inline / wp:anchor、p:pic 的 a:xfrm、xlsx 的 xdr anchor）
 
@@ -240,7 +252,7 @@ Word 的列表定义在 numbering.xml：`w:abstractNum` 下每一级一个 `w:lv
 | `position` | `inline`（默认，跟文字走）`float`（浮动，文字绕排）`absolute`（按页面或幻灯片定位，不占位置） | wp:inline / wp:anchor | 都是绝对定位，inline 时按版式顺排 | twoCellAnchor / oneCellAnchor | 正常流 / float / position:absolute | 正常 / place(float: true) / place |
 | `float` | `left` `right` | wp:anchor + positionH align | — | — | float | place(left / right) |
 | `wrap` | `square` `tight` `topAndBottom` `none` `behind` `inFront` | wrapSquare / wrapTight / wrapTopAndBottom / wrapNone + behindDoc | — | — | float + shape-outside（tight 近似 square） | float: true 只有 topAndBottom 和 square 近似 |
-| `wrapDistance` | 长度，或四边 `{ top, right, bottom, left }` | distT / distR / distB / distL | — | — | margin | clearance |
+| `wrapDistance` | 长度，或四边 `{ top, right, bottom, left }`，默认 6pt，四边写法里没写的边也是 6pt | distT / distR / distB / distL | — | — | 靠文字一边的 margin；写了时加 margin-top / bottom | 不绕排，写了时上下两边当段前段后 |
 | `anchorTo` | `paragraph` `margin` `page`，PPT 里是 `slide` | positionH / positionV relativeFrom（column、margin、page） | 幻灯片 | 单元格 | 包含块 | place 的参照 |
 | `x` / `y` | 长度：相对 `anchorTo` 的偏移 | wp:posOffset（EMU） | a:off（EMU） | xdr:from 列行 + 偏移 | left / top | dx / dy |
 | `horizontalAlign` | `left` `center` `right` | positionH align | 按幻灯片宽算 | — | margin auto | place(center) |

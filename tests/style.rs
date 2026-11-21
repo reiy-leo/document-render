@@ -295,3 +295,66 @@ fn style_set_variables() {
     let e = err(&VARS.replace(r#""$color2""#, r#""$bad name""#));
     assert!(e.contains("变量名"), "{e}");
 }
+
+const WRAP_SIDES: &str = r##"{
+  "root": "d",
+  "elements": {
+    "d": { "type": "Document", "children": ["i", "t"] },
+    "i": { "type": "Image", "props": { "src": "examples/logo.svg", "alt": "logo", "width": 40 },
+           "style": { "position": "float", "float": "left", "wrap": "square",
+                      "wrapDistance": { "top": 2, "right": "3mm", "bottom": 4 } } },
+    "t": { "type": "Text", "props": { "text": "绕着图片排的文字。" } }
+  }
+}"##;
+
+/// wrapDistance 写四边：docx 的 distT/R/B/L、html 的 margin 各自对上，没写的边用 6pt。
+#[test]
+fn wrap_distance_sides() {
+    let s = html(WRAP_SIDES);
+    assert!(s.contains("float:left;margin-right:8.50"), "{s}");
+    assert!(s.contains("margin-top:2pt;margin-bottom:4pt;"), "{s}");
+    // docx 嵌不了 svg，换成 png 看 anchor
+    let dir = std::env::temp_dir().join("document-render-wrap-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    image::RgbImage::from_pixel(4, 2, image::Rgb([200, 30, 30]))
+        .save(dir.join("dot.png"))
+        .unwrap();
+    let json = WRAP_SIDES.replace("examples/logo.svg", "dot.png");
+    let out = document_render::render_str(&json, Format::Docx, Some(&dir)).unwrap();
+    let doc = {
+        use std::io::Read;
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(out.bytes.clone())).unwrap();
+        let mut f = z.by_name("word/document.xml").unwrap();
+        let mut x = String::new();
+        f.read_to_string(&mut x).unwrap();
+        x
+    };
+    // 1pt = 12700 EMU；3mm ≈ 8.504pt
+    assert!(doc.contains("distT=\"25400\""), "{doc}");
+    assert!(doc.contains("distB=\"50800\""), "{doc}");
+    assert!(doc.contains("distL=\"76200\""), "{doc}");
+    assert!(doc.contains("distR=\"10800"), "{doc}");
+    // 读回 JSON：四边不一样时写成对象
+    let parsed = document_render::parse::docx(
+        &out.bytes,
+        &document_render::parse::Options {
+            assets_dir: dir.join("x.assets").to_string_lossy().into(),
+        },
+    )
+    .unwrap();
+    let img = parsed.json["elements"]
+        .as_object()
+        .unwrap()
+        .values()
+        .find(|e| e["type"] == "Image")
+        .unwrap();
+    let wd = &img["style"]["wrapDistance"];
+    assert_eq!(
+        (wd["top"].as_f64(), wd["left"].as_f64()),
+        (Some(2.0), Some(6.0)),
+        "{img}"
+    );
+    all_formats(WRAP_SIDES);
+    let e = err(&WRAP_SIDES.replace("\"bottom\": 4", "\"down\": 4"));
+    assert!(e.contains("down"), "{e}");
+}

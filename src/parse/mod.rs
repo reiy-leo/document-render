@@ -214,7 +214,8 @@ struct Anchor {
     h_align: Option<String>,
     x: f32,
     y: f32,
-    dist: f32,
+    /// 图文间距，上、右、下、左（pt）
+    dist: [f32; 4],
 }
 
 /// 一段解析好的段落。
@@ -2191,11 +2192,13 @@ impl Ctx {
                     .map(str::to_string),
                 x: off(ph),
                 y: off(pv),
-                dist: box_
-                    .attribute("distL")
-                    .and_then(|v| v.parse::<f32>().ok())
-                    .map(|v| v / 12700.0)
-                    .unwrap_or(0.0),
+                // 上、右、下、左
+                dist: ["distT", "distR", "distB", "distL"].map(|k| {
+                    box_.attribute(k)
+                        .and_then(|v| v.parse::<f32>().ok())
+                        .map(|v| v / 12700.0)
+                        .unwrap_or(0.0)
+                }),
             })
         } else {
             None
@@ -2292,8 +2295,17 @@ impl Ctx {
                 if float {
                     st.insert("position".into(), json!("float"));
                     st.insert("float".into(), json!(a.h_align.as_deref().unwrap()));
-                    if (a.dist - 6.0).abs() > 0.1 {
-                        st.insert("wrapDistance".into(), json!(round2(a.dist)));
+                    let [t, r, b, l] = a.dist;
+                    let all_same = [r, b, l].iter().all(|x| (x - t).abs() <= 0.1);
+                    if all_same {
+                        if (t - 6.0).abs() > 0.1 {
+                            st.insert("wrapDistance".into(), json!(round2(t)));
+                        }
+                    } else {
+                        st.insert(
+                            "wrapDistance".into(),
+                            json!({ "top": round2(t), "right": round2(r), "bottom": round2(b), "left": round2(l) }),
+                        );
                     }
                 } else {
                     st.insert("position".into(), json!("absolute"));
@@ -2533,7 +2545,16 @@ impl Ctx {
             d.insert(k.clone(), v.clone());
         }
         let elem_style = merged(&exp_style, &from_map(&d));
-        // 其他级：和第一级的有效值不一样的写进 levelN
+        // 其他级：和这一级会拿到的值不一样的写进 levelN。
+        // 元素样式上的编号类型、模板、起始号、符号字体、图片符号只管第一级，
+        // 第二级起这些字段从默认值比起
+        const FIRST_ONLY: &[&str] = &[
+            "listStyleType",
+            "listMarkerFormat",
+            "listMarkerImage",
+            "listMarkerFont",
+            "listStart",
+        ];
         let mut parts = Map::new();
         let mut used: Vec<usize> = items
             .iter()
@@ -2544,7 +2565,7 @@ impl Ctx {
         used.dedup();
         let base_list = {
             let mut m = to_map(&elem_style);
-            m.retain(|k, _| LIST_KEYS.contains(&k.as_str()));
+            m.retain(|k, _| LIST_KEYS.contains(&k.as_str()) && !FIRST_ONLY.contains(&k.as_str()));
             m
         };
         let mut ordered_at: Vec<bool> = vec![ordered];
@@ -2555,13 +2576,11 @@ impl Ctx {
             let level = i - min_lvl + 1;
             let fi = fields(self, i, level, first_para_of(i));
             let mut base = base_list.clone();
-            if !base.contains_key("listStyleType") {
-                let o = ordered_at.get(level - 1).copied().unwrap_or(ordered);
-                base.insert(
-                    "listStyleType".into(),
-                    serde_json::to_value(crate::render::common::default_type(level, o)).unwrap(),
-                );
-            }
+            let o = ordered_at.get(level - 1).copied().unwrap_or(ordered);
+            base.insert(
+                "listStyleType".into(),
+                serde_json::to_value(crate::render::common::default_type(level, o)).unwrap(),
+            );
             let mut pd = Map::new();
             for (k, v) in &fi {
                 if !base.get(k).is_some_and(|b| same(b, v)) {
@@ -2572,18 +2591,10 @@ impl Ctx {
                 if !fi.contains_key(k)
                     && matches!(
                         k.as_str(),
-                        "listMarkerFormat"
-                            | "listStart"
-                            | "listMarkerAlign"
-                            | "listMarkerGap"
-                            | "listMarkerColor"
-                            | "listMarkerSize"
-                            | "listMarkerFont"
+                        "listMarkerAlign" | "listMarkerGap" | "listMarkerColor" | "listMarkerSize"
                     )
                 {
                     let def = match k.as_str() {
-                        "listMarkerFormat" => json!(format!("%{level}.")),
-                        "listStart" => json!(1),
                         "listMarkerAlign" => json!("left"),
                         "listMarkerGap" => json!("tab"),
                         _ => continue,

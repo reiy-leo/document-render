@@ -1279,6 +1279,12 @@ impl Markup<'_> {
                     Side::Right => "right",
                 };
                 fig = format!("#align({side})[{fig}]");
+                // 不绕排，wrapDistance 的上下两边当这个块的段前段后（没写 spaceBefore/After 时）
+                if let Some(d) = s.wrap_distance {
+                    let [t, _, b, _] = d.sides_pt();
+                    st.space_before.get_or_insert(Len::Pt(t));
+                    st.space_after.get_or_insert(Len::Pt(b));
+                }
                 self.block(fig, &st, parent, &n.id);
             }
             Position::Absolute => {
