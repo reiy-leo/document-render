@@ -70,17 +70,17 @@ fn same_borders_make_one_box() {
     ]);
     let src = typst(&json);
     assert_eq!(boxes(&src), 1, "{src}");
-    // 框的上下内边距只在第一段上面、最后一段下面
+    // 框的上下内边距只在第一段上面、最后一段下面；左右是内边距加 Word 让出的 1.5pt（见 tests/word_pos.rs）
     assert!(
-        src.contains("inset: (top: 4pt, right: 4pt, bottom: 0pt, left: 4pt)"),
+        src.contains("inset: (top: 4pt, right: 5.5pt, bottom: 0pt, left: 5.5pt)"),
         "{src}"
     );
     assert!(
-        src.contains("inset: (top: 0pt, right: 4pt, bottom: 0pt, left: 4pt)"),
+        src.contains("inset: (top: 0pt, right: 5.5pt, bottom: 0pt, left: 5.5pt)"),
         "{src}"
     );
     assert!(
-        src.contains("inset: (top: 0pt, right: 4pt, bottom: 4pt, left: 4pt)"),
+        src.contains("inset: (top: 0pt, right: 5.5pt, bottom: 4pt, left: 5.5pt)"),
         "{src}"
     );
 
@@ -106,11 +106,11 @@ fn between_line_and_spacing_follow_word() {
     assert_eq!(boxes(&src), 1, "{src}");
     // 有线：上一段的段后在线上面，线下面空段前比段后多的 6pt
     assert!(
-        src.contains("inset: (top: 4pt, right: 4pt, bottom: 12pt, left: 4pt)"),
+        src.contains("inset: (top: 4pt, right: 5.5pt, bottom: 12pt, left: 5.5pt)"),
         "{src}"
     );
     assert!(
-        src.contains("inset: (top: 6pt, right: 4pt, bottom: 0pt, left: 4pt)"),
+        src.contains("inset: (top: 6pt, right: 5.5pt, bottom: 0pt, left: 5.5pt)"),
         "{src}"
     );
     // 两条线：p1、p2 都写了 borderBetween（p3 的用不上，它也没写）
@@ -144,11 +144,11 @@ fn without_line_the_gap_is_split_like_word() {
     assert_eq!(boxes(&src), 1, "{src}");
     // 两段之间空 12pt：上一段的段后 6pt 归上一段，多出来的 6pt 归下一段（各自铺各自的底色）
     assert!(
-        src.contains("inset: (top: 0pt, right: 0pt, bottom: 6pt, left: 0pt)"),
+        src.contains("inset: (top: 0pt, right: 1.5pt, bottom: 6pt, left: 1.5pt)"),
         "{src}"
     );
     assert!(
-        src.contains("inset: (top: 6pt, right: 0pt, bottom: 0pt, left: 0pt)"),
+        src.contains("inset: (top: 6pt, right: 1.5pt, bottom: 0pt, left: 1.5pt)"),
         "{src}"
     );
     // 第一段的段前、最后一段的段后在框外：这里都是 0

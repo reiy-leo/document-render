@@ -976,6 +976,78 @@ fn mix_white(c: &crate::style::Color, t: f32) -> String {
     format!("#{:02x}{:02x}{:02x}", ch(0), ch(2), ch(4))
 }
 
+// ---------- 段落边框的位置 ----------
+
+/// docx 里写成一个带 w:pBdr 段落的组件：Some(true) 是 Quote、Callout（docx 把线宽和内边距加进了
+/// 左右缩进，见 docx.rs 的 boxed），Some(false) 是 Text、Heading、Divider、Code、Math。
+/// 编号标题的缩进在编号定义里，不算。
+pub(crate) fn pbdr_para(n: &Node) -> Option<bool> {
+    use crate::components::Component as C;
+    match &n.component {
+        C::Quote(_) | C::Callout(_) => Some(true),
+        C::Text(_) | C::Divider(_) | C::Code(_) | C::Math(_) => Some(false),
+        C::Heading(h) if h.number.is_none() => Some(false),
+        _ => None,
+    }
+}
+
+/// Word 画段落左右边框时，线的里沿和内边距（w:space）之外再往外让出的距离，pt。
+/// Windows Word 2024 实测（2026-11-22）：线宽 0.5～3pt、内边距 0～10pt、左右缩进 0 和 36pt，
+/// 左边都是 1.42、右边都是 1.58（导出 PDF 整体偏右 0.08），取 1.5。上下没有这一段。
+pub(crate) const PBDR_GAP: f32 = 1.5;
+
+/// 按 Word 的画法摆一段带边框的段落：文字留在 docx 写的缩进处，内边距和线都画在缩进外面。
+/// 返回改过的样式：左右缩进挪到线的外沿，内边距（有线的边）是 Word 的 w:space（整数 pt），
+/// 左右再加 [`PBDR_GAP`]；没有线的边 Word 不留内边距，这里也是 0。线要画在盒子里面
+/// （pdf 用 outset 把 Typst 压在边上的线挪进去，html 的 border 本来就在盒子里）。
+/// `boxed` 见 [`pbdr_para`]。四边都没有线时返回 None，照原来的画法。
+pub(crate) fn word_pbdr(s: &Style, boxed: bool) -> Option<Style> {
+    let line = |e: Edge| {
+        s.border_side(e)
+            .filter(|b| !b.is_none() && b.width > 0.0)
+            .map(|b| b.width)
+    };
+    if Edge::ALL.iter().all(|e| line(*e).is_none()) {
+        return None;
+    }
+    let fs = s.size_pt();
+    let pt = |l: Option<Len>| l.map_or(0.0, |x| x.pt(fs, 0.0));
+    // docx 写的内边距：四舍五入到整数 pt
+    let space = |e: Edge| s.padding_side(e).unwrap_or(0.0).round().max(0.0);
+    let mut out = s.clone();
+    out.padding = None;
+    for (e, m, pad) in [
+        (Edge::Left, &mut out.margin_left, &mut out.padding_left),
+        (Edge::Right, &mut out.margin_right, &mut out.padding_right),
+    ] {
+        let base = pt(*m);
+        match line(e) {
+            Some(w) => {
+                let indent = if boxed {
+                    base + s.padding_side(e).unwrap_or(0.0) + w
+                } else {
+                    base
+                };
+                *m = Some(Len::Pt(indent - w - space(e) - PBDR_GAP));
+                *pad = Some(Len::Pt(space(e) + PBDR_GAP));
+            }
+            None => {
+                if m.is_some() {
+                    *m = Some(Len::Pt(base));
+                }
+                *pad = Some(Len::Pt(0.0));
+            }
+        }
+    }
+    for (e, pad) in [
+        (Edge::Top, &mut out.padding_top),
+        (Edge::Bottom, &mut out.padding_bottom),
+    ] {
+        *pad = Some(Len::Pt(if line(e).is_some() { space(e) } else { 0.0 }));
+    }
+    Some(out)
+}
+
 // ---------- 段落边框合框 ----------
 
 /// 相邻几段边框设置相同的段落，Word 画成一个框（2026-11-21 在 Windows Word 2024 上实测）：
@@ -986,19 +1058,7 @@ fn mix_white(c: &crate::style::Color, t: f32) -> String {
 /// 段前段后、底色、对齐、首行缩进、borderBetween、段落样式不一样都照样合；
 /// 中间夹着表格、列表、没边框的段落（空段落也算）就断开。
 pub(crate) fn pbdr_key(n: &Node) -> Option<String> {
-    use crate::components::Component as C;
-    // docx 里写成一个带 w:pBdr 的段落的组件；编号标题的缩进在编号定义里，不参与
-    let boxed = match &n.component {
-        C::Quote(_) | C::Callout(_) => true,
-        C::Text(_) | C::Divider(_) | C::Code(_) | C::Math(_) => false,
-        C::Heading(h) => {
-            if h.number.is_some() {
-                return None;
-            }
-            false
-        }
-        _ => return None,
-    };
+    let boxed = pbdr_para(n)?;
     let s = &n.style;
     let live = |b: Option<&Border>| b.filter(|b| !b.is_none()).cloned();
     let sides: Vec<Option<Border>> = Edge::ALL.iter().map(|e| live(s.border_side(*e))).collect();
@@ -1091,13 +1151,17 @@ pub(crate) fn pbdr_group(kids: &[Node]) -> PbdrGroup {
         keep_with_next: last.keep_with_next,
         ..Style::default()
     };
-    if first.margin_left.is_some() {
-        outer.margin_left = Some(Len::Pt(pt(first, first.margin_left)));
+    // 框按 Word 的画法摆（见 word_pbdr）：外框的缩进是线的外沿，内边距交给各段
+    let boxed = pbdr_para(&kids[0]).unwrap_or(false);
+    let wf = word_pbdr(first, boxed).unwrap_or_else(|| first.clone());
+    let wl = word_pbdr(last, boxed).unwrap_or_else(|| last.clone());
+    if wf.margin_left.is_some() {
+        outer.margin_left = Some(Len::Pt(pt(&wf, wf.margin_left)));
     }
-    if first.margin_right.is_some() {
-        outer.margin_right = Some(Len::Pt(pt(first, first.margin_right)));
+    if wf.margin_right.is_some() {
+        outer.margin_right = Some(Len::Pt(pt(&wf, wf.margin_right)));
     }
-    let pad = |e: Edge| first.padding_side(e).unwrap_or(0.0);
+    let pad = |e: Edge| wf.padding_side(e).unwrap_or(0.0);
     let (pad_l, pad_r) = (pad(Edge::Left), pad(Edge::Right));
     let lines: Vec<Option<Border>> = kids[..kids.len() - 1]
         .iter()
@@ -1107,7 +1171,7 @@ pub(crate) fn pbdr_group(kids: &[Node]) -> PbdrGroup {
     let mut tops = vec![0.0f32; n];
     let mut bottoms = vec![0.0f32; n];
     tops[0] = pad(Edge::Top);
-    bottoms[n - 1] = last.padding_side(Edge::Bottom).unwrap_or(0.0);
+    bottoms[n - 1] = wl.padding_side(Edge::Bottom).unwrap_or(0.0);
     for i in 0..n - 1 {
         let (a, b) = (&kids[i].style, &kids[i + 1].style);
         let after = pt(a, a.space_after);

@@ -155,6 +155,7 @@ fn markup_with<'a>(doc: &Doc, tree: &Node, opts: &'a Options, math_fallback: boo
         had_math: false,
         marker_font: None,
         heading_numbering: common::heading_numbering(tree).cloned(),
+        line_inside: false,
     };
     m.preamble(doc);
     let base = Style::default();
@@ -186,6 +187,8 @@ struct Markup<'a> {
     marker_font: Option<(String, f32)>,
     /// 标题编号定义（从根 Document 上取）
     heading_numbering: Option<crate::doc::HeadingNumbering>,
+    /// 下一个 block_src 画的是段落边框（Word 画法）：实线整条画在盒子里面，不压在盒子边上
+    line_inside: bool,
 }
 
 impl Markup<'_> {
@@ -254,8 +257,14 @@ impl Markup<'_> {
     }
 
     fn node(&mut self, n: &Node, parent: &Style) {
+        // 带边框的段落按 Word 的画法摆：文字在缩进处，内边距和线画在外面（见 common::word_pbdr）
+        let word = common::pbdr_para(n)
+            .and_then(|boxed| common::word_pbdr(&n.style, boxed))
+            .map(|style| Node { style, ..n.clone() });
+        let n = word.as_ref().unwrap_or(n);
         let s = &n.style;
         self.cur_id = n.id.clone();
+        self.line_inside = word.is_some();
         match &n.component {
             Component::Document(_) => {
                 let body = self.children_src(n);
@@ -533,6 +542,7 @@ impl Markup<'_> {
             }
         }
         let body = std::mem::replace(&mut self.out, saved);
+        self.line_inside = true;
         let src = self.block_src(body, &g.outer, parent, &kids[0].id);
         self.out.push_str(&src);
     }
@@ -565,6 +575,7 @@ impl Markup<'_> {
 
     /// 把一段内容包上段落和盒子样式。
     fn block_src(&mut self, body: String, s: &Style, parent: &Style, id: &str) -> String {
+        let line_inside = std::mem::take(&mut self.line_inside);
         let fs = s.size_pt();
         let mut sets = String::new();
         let text = self.text_args(s, parent, id);
@@ -668,13 +679,34 @@ impl Markup<'_> {
         if !strokes.is_empty() {
             args.push(format!("stroke: ({})", strokes.join(", ")));
         }
+        // 段落边框（Word 画法）：线整条在盒子里面，所以内边距加上线宽，
+        // Typst 的线压在盒子边上，用负的 outset 往里挪半个线宽。图案边在网格里另算，本来就在里面
+        let inside: [f32; 4] = std::array::from_fn(|i| {
+            s.border_side(Edge::ALL[i])
+                .filter(|b| line_inside && !b.is_none())
+                .map_or(0.0, |b| b.width)
+        });
         let pads: Vec<String> = Edge::ALL
             .iter()
             .zip(["top", "right", "bottom", "left"])
-            .filter_map(|(e, k)| s.padding_side(*e).map(|p| format!("{k}: {p}pt")))
+            .enumerate()
+            .filter_map(|(i, (e, k))| {
+                let p = s.padding_side(*e);
+                (p.is_some() || inside[i] > 0.0)
+                    .then(|| format!("{k}: {}pt", p.unwrap_or(0.0) + inside[i]))
+            })
             .collect();
         if !pads.is_empty() {
             args.push(format!("inset: ({})", pads.join(", ")));
+        }
+        if inside.iter().any(|w| *w > 0.0) {
+            let o: Vec<String> = ["top", "right", "bottom", "left"]
+                .iter()
+                .zip(inside)
+                .filter(|(_, w)| *w > 0.0)
+                .map(|(k, w)| format!("{k}: {}pt", -w / 2.0))
+                .collect();
+            args.push(format!("outset: ({})", o.join(", ")));
         }
         if let Some(r) = s.radius {
             args.push(format!("radius: {}pt", r.pt(fs, 0.0)));
@@ -709,7 +741,7 @@ impl Markup<'_> {
         // 有图案边：内边距挪进网格中间那格，block 本身不要 inset
         let content = match stripe_frame(s, &sets, &body).or_else(|| tile_grid(s, &sets, &body)) {
             Some(grid) => {
-                args.retain(|a| !a.starts_with("inset:"));
+                args.retain(|a| !a.starts_with("inset:") && !a.starts_with("outset:"));
                 grid
             }
             None => format!("{sets}{body}"),

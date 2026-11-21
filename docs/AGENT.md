@@ -581,7 +581,7 @@ run 对象字段（多写会报错）：
 | `borderInsideH` `borderInsideV` | 边框 | 表格内部横线、竖线 |
 | `borderDiagonal` | 边框 | 单元格斜线 |
 | `background` | 背景 | |
-| `padding` | 长度 | 四边内边距；docx 段落上只在有 `border` 时生效 |
+| `padding` | 长度 | 四边内边距；docx 段落上只在有 `border` 的那几边生效。段落的边框和内边距跟 Word 一样画在文字缩进外面，文字不挪位置 |
 | `paddingTop` `paddingRight` `paddingBottom` `paddingLeft` | 长度 | 单边 |
 | `width` `height` | 长度或百分比 | 盒子宽高 |
 | `verticalAlign` | `top` `middle` `bottom` | 格子内竖直对齐 |

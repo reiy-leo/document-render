@@ -307,6 +307,11 @@ const TILES_MARK: &str = "/*document-render-tiles*/";
 
 impl Html<'_> {
     fn node(&mut self, n: &Node, parent: Option<&Style>) {
+        // 带边框的段落按 Word 的画法摆：文字在缩进处，内边距和线画在外面（见 common::word_pbdr）
+        let word = common::pbdr_para(n)
+            .and_then(|boxed| common::word_pbdr(&n.style, boxed))
+            .map(|style| Node { style, ..n.clone() });
+        let n = word.as_ref().unwrap_or(n);
         let id = esc(&n.id);
         // 代码块逐行算（见 code），块上的行高按西文
         self.cjk = !matches!(n.component, Component::Code(_))
