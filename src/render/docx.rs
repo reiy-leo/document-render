@@ -221,6 +221,7 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> anyhow::Result<Output> 
         docx = docx.add_abstract_numbering(abs).add_numbering(num);
     }
     let mut xml = docx.build();
+    xml.numberings = fix_numbering(&xml.numberings);
     xml.document = mark_table_headers(&xml.document, &r.repeat_heads);
     xml.document = fix_sections(&xml.document, &fixes);
     xml.document = mark_behind(&xml.document);
@@ -2239,4 +2240,234 @@ fn shading(b: &Background) -> Shading {
             .shd_type(ShdType::Clear)
             .fill(b.solid().rgb()),
     }
+}
+
+/// CT_Lvl 子元素的顺序（ECMA-376 第 1 部分 17.9.6）。
+const LVL_ORDER: &[&str] = &[
+    "w:start",
+    "w:numFmt",
+    "w:lvlRestart",
+    "w:pStyle",
+    "w:isLgl",
+    "w:suff",
+    "w:lvlText",
+    "w:lvlPicBulletId",
+    "w:legacy",
+    "w:lvlJc",
+    "w:pPr",
+    "w:rPr",
+];
+
+/// CT_PPrBase 子元素的顺序（17.3.1.26）。编号级别里的 pPr 是 CT_PPrGeneral，没有 rPr。
+const PPR_ORDER: &[&str] = &[
+    "w:pStyle",
+    "w:keepNext",
+    "w:keepLines",
+    "w:pageBreakBefore",
+    "w:framePr",
+    "w:widowControl",
+    "w:numPr",
+    "w:suppressLineNumbers",
+    "w:pBdr",
+    "w:shd",
+    "w:tabs",
+    "w:suppressAutoHyphens",
+    "w:kinsoku",
+    "w:wordWrap",
+    "w:overflowPunct",
+    "w:topLinePunct",
+    "w:autoSpaceDE",
+    "w:autoSpaceDN",
+    "w:bidi",
+    "w:adjustRightInd",
+    "w:snapToGrid",
+    "w:spacing",
+    "w:ind",
+    "w:contextualSpacing",
+    "w:mirrorIndents",
+    "w:suppressOverlap",
+    "w:jc",
+    "w:textDirection",
+    "w:textAlignment",
+    "w:textboxTightWrap",
+    "w:outlineLvl",
+    "w:divId",
+    "w:cnfStyle",
+    "w:pPrChange",
+];
+
+/// CT_RPr 子元素的顺序（17.3.2.28）。
+const RPR_ORDER: &[&str] = &[
+    "w:rStyle",
+    "w:rFonts",
+    "w:b",
+    "w:bCs",
+    "w:i",
+    "w:iCs",
+    "w:caps",
+    "w:smallCaps",
+    "w:strike",
+    "w:dstrike",
+    "w:outline",
+    "w:shadow",
+    "w:emboss",
+    "w:imprint",
+    "w:noProof",
+    "w:snapToGrid",
+    "w:vanish",
+    "w:webHidden",
+    "w:color",
+    "w:spacing",
+    "w:w",
+    "w:kern",
+    "w:position",
+    "w:sz",
+    "w:szCs",
+    "w:highlight",
+    "w:u",
+    "w:effect",
+    "w:bdr",
+    "w:shd",
+    "w:fitText",
+    "w:vertAlign",
+    "w:rtl",
+    "w:cs",
+    "w:em",
+    "w:lang",
+    "w:eastAsianLayout",
+    "w:specVanish",
+    "w:oMath",
+    "w:rPrChange",
+];
+
+/// docx-rs 写 numbering.xml 的 w:lvl 不按 schema 顺序（isLgl、suff、pStyle 写在 rPr 后面，
+/// rPr 里 sz 在 rFonts 前），pPr 里还多一个空的 w:rPr。Word 能打开，但校验不过，
+/// 严格的阅读器会出错。这里把每个 w:lvl 和它的 pPr、rPr 按 schema 重排，去掉 pPr 里的空 rPr。
+fn fix_numbering(xml: &[u8]) -> Vec<u8> {
+    let s = String::from_utf8_lossy(xml);
+    let mut out = String::with_capacity(s.len());
+    let mut rest: &str = &s;
+    while let Some(at) = find_open(rest, "w:lvl") {
+        let Some(head_end) = rest[at..].find('>').map(|j| at + j + 1) else {
+            break;
+        };
+        if rest[..head_end].ends_with("/>") {
+            out.push_str(&rest[..head_end]);
+            rest = &rest[head_end..];
+            continue;
+        }
+        let Some(close) = rest[head_end..].find("</w:lvl>").map(|j| head_end + j) else {
+            break;
+        };
+        out.push_str(&rest[..head_end]);
+        let mut kids = xml_children(&rest[head_end..close]);
+        for k in kids.iter_mut() {
+            match tag_name(k) {
+                "w:pPr" => {
+                    *k = rebuild(k, |c| !is_empty_elem(c, "w:rPr"), PPR_ORDER);
+                }
+                "w:rPr" => *k = rebuild(k, |_| true, RPR_ORDER),
+                _ => {}
+            }
+        }
+        sort_by_order(&mut kids, LVL_ORDER);
+        kids.into_iter().for_each(|k| out.push_str(&k));
+        out.push_str("</w:lvl>");
+        rest = &rest[close + "</w:lvl>".len()..];
+    }
+    out.push_str(rest);
+    out.into_bytes()
+}
+
+/// 找名字正好是 `name` 的开标签（`<w:lvl` 后面不能紧跟字母，免得撞上 `<w:lvlText`）。
+fn find_open(s: &str, name: &str) -> Option<usize> {
+    let pat = format!("<{name}");
+    let mut from = 0;
+    while let Some(j) = s[from..].find(&pat) {
+        let at = from + j;
+        match s[at + pat.len()..].chars().next() {
+            Some(c) if c == '>' || c == '/' || c.is_whitespace() => return Some(at),
+            _ => from = at + pat.len(),
+        }
+    }
+    None
+}
+
+/// 元素的标签名，比如 `<w:ind w:left="1" />` 是 `w:ind`。
+fn tag_name(e: &str) -> &str {
+    let t = e.trim_start_matches('<');
+    let end = t
+        .find(|c: char| c.is_whitespace() || c == '/' || c == '>')
+        .unwrap_or(t.len());
+    &t[..end]
+}
+
+/// 是不是没有属性、没有内容的 `name` 元素。
+fn is_empty_elem(e: &str, name: &str) -> bool {
+    let e = e.trim();
+    e == format!("<{name}/>") || e == format!("<{name} />") || e == format!("<{name}></{name}>")
+}
+
+/// 一段 XML 的顶层子元素，原样切出来；元素之间的文字（一般没有）丢掉。
+fn xml_children(s: &str) -> Vec<String> {
+    let mut kids = Vec::new();
+    let mut i = 0;
+    while let Some(j) = s[i..].find('<') {
+        let start = i + j;
+        let mut depth = 0usize;
+        let mut k = start;
+        let mut end = s.len();
+        while let Some(o) = s[k..].find('<') {
+            let o = k + o;
+            let Some(c) = s[o..].find('>').map(|x| o + x + 1) else {
+                break;
+            };
+            let tag = &s[o..c];
+            if tag.starts_with("</") {
+                depth = depth.saturating_sub(1);
+            } else if !tag.ends_with("/>") && !tag.starts_with("<?") && !tag.starts_with("<!") {
+                depth += 1;
+            }
+            k = c;
+            if depth == 0 {
+                end = c;
+                break;
+            }
+        }
+        kids.push(s[start..end].to_string());
+        i = end;
+    }
+    kids
+}
+
+/// 按 schema 顺序稳定排序；表里没有的元素排在最后，保持原来的先后。
+fn sort_by_order(kids: &mut [String], order: &[&str]) {
+    kids.sort_by_key(|k| {
+        order
+            .iter()
+            .position(|n| *n == tag_name(k))
+            .unwrap_or(order.len())
+    });
+}
+
+/// 重写一个有内容的元素：留下 `keep` 认可的子元素，按 `order` 排好。自闭合的元素原样返回。
+fn rebuild(e: &str, keep: impl Fn(&str) -> bool, order: &[&str]) -> String {
+    let name = tag_name(e);
+    let Some(head_end) = e.find('>').map(|j| j + 1) else {
+        return e.to_string();
+    };
+    let close = format!("</{name}>");
+    if e[..head_end].ends_with("/>") || !e.ends_with(&close) {
+        return e.to_string();
+    }
+    let inner = &e[head_end..e.len() - close.len()];
+    let mut kids: Vec<String> = xml_children(inner)
+        .into_iter()
+        .filter(|c| keep(c))
+        .collect();
+    sort_by_order(&mut kids, order);
+    let mut out = e[..head_end].to_string();
+    kids.into_iter().for_each(|k| out.push_str(&k));
+    out.push_str(&close);
+    out
 }

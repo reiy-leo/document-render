@@ -269,3 +269,82 @@ fn reparse_writes_levels_against_defaults() {
         html_markers(&html(FORMAT_NESTED))
     );
 }
+
+/// numbering.xml 的 w:lvl 要按 schema（CT_Lvl）的顺序写子元素：isLgl、suff 在 lvlText 前，
+/// rPr 在最后；级别里的 pPr 不能带 rPr（空的也不行），rPr 里 rFonts 在 b、color、sz 前。
+#[test]
+fn numbering_levels_follow_schema_order() {
+    let json = r##"{
+      "root": "d",
+      "elements": {
+        "d": { "type": "Document", "children": ["l"] },
+        "l": {
+          "type": "List",
+          "props": { "ordered": true, "items": [
+            "一",
+            { "text": "二", "items": [{ "text": "二.1", "items": ["深"] }, "二.2"] }
+          ] },
+          "style": { "listMarkerColor": "#CF222E", "listMarkerFont": "SimHei", "listMarkerGap": "space" },
+          "parts": {
+            "marker": { "bold": true },
+            "level2": { "listStyleType": "decimal", "listMarkerFormat": "%1.%2" }
+          }
+        }
+      }
+    }"##;
+    let xml = first_list_numbering(json);
+    let lvl_order = [
+        "start",
+        "numFmt",
+        "lvlRestart",
+        "pStyle",
+        "isLgl",
+        "suff",
+        "lvlText",
+        "lvlPicBulletId",
+        "legacy",
+        "lvlJc",
+        "pPr",
+        "rPr",
+    ];
+    let rpr_order = ["rFonts", "b", "bCs", "i", "iCs", "color", "sz", "szCs"];
+    let pos = |s: &str, tag: &str| {
+        let pat = format!("<w:{tag}");
+        s.match_indices(&pat)
+            .find(|(i, _)| matches!(s[i + pat.len()..].chars().next(), Some(' ' | '/' | '>')))
+            .map(|(i, _)| i)
+    };
+    let lvls: Vec<&str> = xml.split("<w:lvl ").skip(1).collect();
+    assert!(!lvls.is_empty(), "{xml}");
+    let mut saw_lgl = false;
+    let mut saw_fonts = false;
+    for lvl in &lvls {
+        let lvl = &lvl[..lvl.find("</w:lvl>").unwrap()];
+        // pPr 和 rPr 之外的顶层子元素按 CT_Lvl 顺序
+        let ppr = pos(lvl, "pPr").expect("每级都有 pPr");
+        let ppr_end = ppr + lvl[ppr..].find("</w:pPr>").unwrap();
+        let top: Vec<usize> = lvl_order
+            .iter()
+            .filter_map(|t| match *t {
+                "pPr" => Some(ppr),
+                "rPr" => lvl[ppr_end..].find("<w:rPr").map(|j| ppr_end + j),
+                t => pos(&lvl[..ppr], t),
+            })
+            .collect();
+        assert!(top.windows(2).all(|w| w[0] < w[1]), "顺序不对：{lvl}");
+        if let (Some(a), Some(b)) = (pos(lvl, "isLgl"), pos(lvl, "lvlText")) {
+            assert!(a < b, "isLgl 要在 lvlText 前：{lvl}");
+            saw_lgl = true;
+        }
+        let p = &lvl[ppr..ppr_end];
+        assert!(!p.contains("<w:rPr"), "pPr 里不该有 rPr：{lvl}");
+        let r = &lvl[ppr_end..];
+        let rp: Vec<usize> = rpr_order.iter().filter_map(|t| pos(r, t)).collect();
+        assert!(rp.windows(2).all(|w| w[0] < w[1]), "rPr 顺序不对：{lvl}");
+        assert!(pos(r, "b").is_some(), "{lvl}");
+        saw_fonts |= pos(r, "rFonts").is_some();
+    }
+    assert!(saw_fonts, "第一级的编号字体要写进 rFonts：{xml}");
+    assert!(saw_lgl, "二级 decimal 应该有 isLgl：{xml}");
+    assert!(xml.contains("<w:suff w:val=\"space\""), "{xml}");
+}
