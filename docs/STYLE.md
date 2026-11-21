@@ -795,6 +795,7 @@ docx 里各部位的样式现在逐格写成直接格式。docx-rs 还不支持 
 - 内置默认样式给它们一套等宽字体回退：macOS 用 Menlo，Windows 用 Consolas，Linux 用 DejaVu Sans Mono。
 - InlineCode 只能放文字类 props（Text、Heading、List 项、表格格子），不能单独当元素用。
 - `language` 第一版只写进 HTML 的 `class="language-rust"`，以后再考虑高亮。
+- 行高按代码自己的字体和字号算，规则同「行距」一节。Word 里代码段落的字号就是代码字号，默认 9pt × 1.4，每行至少 12.6pt。Word 逐行看有没有中文：带中文的行算上东亚字体，会高一些，其他行只算等宽字体。pdf 照这样逐行算；html 给 `<pre>` 写等宽字体的行高，带中文的行再包一层写自己的行高，浏览器按整像素排，单行会差半像素左右（2026-11-22 Windows Word 2024 实测）。
 
 ## 十四、公式：InlineMath 和 Math
 

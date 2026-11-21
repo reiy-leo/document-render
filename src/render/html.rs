@@ -308,7 +308,9 @@ const TILES_MARK: &str = "/*document-render-tiles*/";
 impl Html<'_> {
     fn node(&mut self, n: &Node, parent: Option<&Style>) {
         let id = esc(&n.id);
-        self.cjk = metrics::has_cjk(&format!("{:?}", n.component));
+        // 代码块逐行算（见 code），块上的行高按西文
+        self.cjk = !matches!(n.component, Component::Code(_))
+            && metrics::has_cjk(&format!("{:?}", n.component));
         let st = self.attr(&n.style, parent, &n.id, Ctx::Block);
         let lang = n
             .style
@@ -751,20 +753,32 @@ impl Html<'_> {
             .map(|l| format!(" class=\"language-{}\"", esc(l)))
             .unwrap_or_default();
         let _ = write!(self.out, "<pre id=\"{}\"{st}><code{class}>", esc(&n.id));
-        if p.line_numbers {
-            for (i, line) in p.code.lines().enumerate() {
-                if i > 0 {
-                    self.out.push('\n');
-                }
+        // Word 逐行看有没有中文：pre 上的行高按西文算（见 node），有中文的行包一层，行高按东亚字体算
+        let cjk_lh = line_height_css(&n.style, true, None);
+        let lines: Vec<&str> = if p.line_numbers {
+            p.code.lines().collect()
+        } else {
+            p.code.split('\n').collect()
+        };
+        for (i, line) in lines.into_iter().enumerate() {
+            if i > 0 {
+                self.out.push('\n');
+            }
+            let wrap = cjk_lh.as_ref().filter(|_| metrics::has_cjk(line));
+            if let Some(lh) = wrap {
+                let _ = write!(self.out, "<span style=\"{lh}\">");
+            }
+            if p.line_numbers {
                 let _ = write!(
                     self.out,
-                    "<span class=\"document-render-ln\">{}</span>{}",
-                    i + 1,
-                    esc(line)
+                    "<span class=\"document-render-ln\">{}</span>",
+                    i + 1
                 );
             }
-        } else {
-            self.out.push_str(&esc(&p.code));
+            self.out.push_str(&esc(line));
+            if wrap.is_some() {
+                self.out.push_str("</span>");
+            }
         }
         self.out.push_str("</code></pre>\n");
     }

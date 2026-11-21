@@ -954,11 +954,29 @@ impl Markup<'_> {
 
     fn code(&mut self, n: &Node, p: &CodeProps, parent: &Style) {
         let s = &n.style;
+        // 行盒按代码自己的字体、字号算（Word 里段落字号就是代码字号），不能留给外层块按父级字号算。
+        // Word 逐行看有没有中文：有中文的行才算上东亚字体，所以这几行单独设行盒
+        let fs = s.size_pt();
+        let edges = line_edges(s, s.line_height, fs, false, None);
         let mut body = format!(
-            "#show raw: set text(font: {}, size: {}pt)\n",
+            "#set par(leading: 0pt)\n#show raw: set text(font: {}, size: {fs}pt, {edges})\n",
             font_list(s, true),
-            s.size_pt()
         );
+        let cjk_lines: Vec<String> = p
+            .code
+            .lines()
+            .enumerate()
+            .filter(|(_, l)| metrics::has_cjk(l))
+            .map(|(i, _)| (i + 1).to_string())
+            .collect();
+        if !cjk_lines.is_empty() {
+            let _ = writeln!(
+                body,
+                "#show raw.line: it => if it.number in ({},) {{ set text({}); it }} else {{ it }}",
+                cjk_lines.join(", "),
+                line_edges(s, s.line_height, fs, true, None)
+            );
+        }
         if p.line_numbers {
             body.push_str(
                 "#show raw.line: it => [#box(width: 2.5em)[#text(fill: rgb(\"#999999\"))[#it.number]]#it.body]\n",
