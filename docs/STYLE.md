@@ -76,9 +76,8 @@ document-render 的样式以 OOXML 为准：先把 Word、PowerPoint、Excel 能
 - 放行：命令行 `--allow-missing-fonts`，MCP 的 `render`、`check` 写 `allow_missing_fonts: true`。缺的字体变成警告，照常出文件：pdf 里换成默认字体，docx 里照写字体名。
 - docx 也报错：本机没有这个字体，就没法确认打开文件的那台电脑有没有。确定对方装了，就用上面的参数放行。
 - html、Markdown 不查，浏览器自己回退。`check` 不分格式，也把缺的字体算成错误，加参数时降为警告。
-- parse 读回的 JSON：document-render 写 docx 时，没写字体就在 docDefaults 里写 Arial（西文、复杂文种）和 PingFang SC（东亚）。parse 读到正文默认字体里和这两个完全一样的那个文种，就不写进 JSON，再渲染时走上面的内置默认字体组，在没装 Arial、苹方的机器上也能出 pdf。只去掉对得上的那个文种，别的照写。别的软件做的 docx，正文默认字体正好是 Arial 的，也会这样去掉；在别的字体下面专门改回 Arial 的段落、文字照样读回。
 - parse 读字体按文种比，只写和上面传下来不一样的那个文种，不会每段都抄一遍东亚字体。
-- 读回的字体照 docx 原样，docx 写的是 Menlo 就读成 Menlo，不换成等宽回退列表。跨系统字体兼容由写文档的人负责，document-render 不替他兜底（Rei 2026-11-21 定）。
+- 读回的字体照 docx 原样，不跳过、不替换。document-render 写 docx 时，没写字体就在 docDefaults 里写 Arial（西文、复杂文种）和 PingFang SC（东亚），parse 读回来就是 `styles.Document` 里的 Arial、PingFang SC；代码写的是 Menlo，就读成 Menlo，不换成等宽回退列表。本机没装这些字体，再出 pdf、docx 会报缺字体，要出就放行。跨系统字体兼容由写文档的人负责，document-render 不替他兜底（Rei 2026-11-21 定）。
 - docx 每个文种只能写一个字体名，回退列表（包括 `listMarkerFont`）只写第一个。
 
 ## 三、段落（对应 w:pPr、a:pPr、xlsx alignment）

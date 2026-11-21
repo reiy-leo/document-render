@@ -670,6 +670,17 @@ fn item_spacing_html_and_pdf() {
 
 // ---------- parse 读回 ----------
 
+/// 读回的 JSON 再出 docx：字体照 docx 原样读回（Arial、PingFang SC），本机不一定有，放行缺字体。
+fn render_back(json: &str) -> Vec<u8> {
+    let env = Env {
+        allow_missing_fonts: true,
+        ..Env::default()
+    };
+    document_render::render_with(json, Format::Docx, None, &env)
+        .unwrap_or_else(|e| panic!("{e:#}"))
+        .bytes
+}
+
 fn reparse(json: &str) -> serde_json::Value {
     let bytes = render(json, Format::Docx);
     document_render::parse::docx(
@@ -712,7 +723,7 @@ fn parse_reads_continue_from() {
     let again = serde_json::to_string(&doc).unwrap();
     assert_eq!(html_markers(&html(&again)), html_markers(&html(CHAIN)));
     assert_eq!(
-        para_nums(&render(&again, Format::Docx)),
+        para_nums(&render_back(&again)),
         para_nums(&render(CHAIN, Format::Docx))
     );
 }
@@ -740,7 +751,7 @@ fn parse_reads_item_spacing() {
     assert!(l["parts"]["item"].is_null(), "{l}");
     let again = serde_json::to_string(&doc).unwrap();
     assert_eq!(
-        para_spacing(&render(&again, Format::Docx)),
+        para_spacing(&render_back(&again)),
         para_spacing(&render(SPACED, Format::Docx))
     );
 }

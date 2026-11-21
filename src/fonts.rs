@@ -33,9 +33,9 @@ pub const DEFAULT_CJK: &[&str] = &[
 pub const DEFAULT_MONO: &[&str] = &["Menlo", "Consolas", "DejaVu Sans Mono"];
 
 /// 没写字体时 docx 里写的默认西文字体（w:docDefaults 的 ascii、hAnsi、cs）。
-/// parse 读回时和它一样的西文、复杂文种字段不写进 JSON，再渲染时走内置默认字体组。
+/// parse 照原样读回，不跳过。
 pub const DOCX_DEFAULT_LATIN: &str = "Arial";
-/// 没写字体时 docx 里写的默认中文字体（w:docDefaults 的 eastAsia），parse 同样省略。
+/// 没写字体时 docx 里写的默认中文字体（w:docDefaults 的 eastAsia），parse 同样照原样读回。
 pub const DOCX_DEFAULT_EAST_ASIA: &str = "PingFang SC";
 
 /// 常见中日韩字体的本地名和英文族名。parse 读回时把本地名换成英文名，查字体时两种都认。

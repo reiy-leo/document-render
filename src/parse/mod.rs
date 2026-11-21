@@ -452,40 +452,6 @@ fn expand(m: &mut Map<String, Value>) {
 }
 
 /// 四边一样时合回 `border`、`padding`；三个文种一样的字体写成一个名字。
-/// Document 样式的 fontFamily 里，和 docx 渲染默认字体（[`crate::fonts::DOCX_DEFAULT_LATIN`]、
-/// [`crate::fonts::DOCX_DEFAULT_EAST_ASIA`]）完全一样的文种去掉：西文、复杂文种对西文默认，
-/// 东亚对中文默认。去完空了就不写 fontFamily。别的文档正文默认字体正好是 Arial 的也会去掉。
-fn drop_docx_default_fonts(m: &mut Map<String, Value>) {
-    use crate::fonts::{DOCX_DEFAULT_EAST_ASIA, DOCX_DEFAULT_LATIN};
-    let Some(f) = m.get_mut("fontFamily") else {
-        return;
-    };
-    match f {
-        Value::Object(f) => {
-            for (k, d) in [
-                ("latin", DOCX_DEFAULT_LATIN),
-                ("eastAsia", DOCX_DEFAULT_EAST_ASIA),
-                ("complex", DOCX_DEFAULT_LATIN),
-            ] {
-                if f.get(k).and_then(Value::as_str) == Some(d) {
-                    f.remove(k);
-                }
-            }
-            if f.is_empty() {
-                m.remove("fontFamily");
-            }
-        }
-        // 字符串是三个文种都用它
-        Value::String(x) if x == DOCX_DEFAULT_LATIN => {
-            *f = json!({ "eastAsia": DOCX_DEFAULT_LATIN });
-        }
-        Value::String(x) if x == DOCX_DEFAULT_EAST_ASIA => {
-            *f = json!({ "latin": DOCX_DEFAULT_EAST_ASIA, "complex": DOCX_DEFAULT_EAST_ASIA });
-        }
-        _ => {}
-    }
-}
-
 fn compact(m: &mut Map<String, Value>) {
     for (all, sides) in [
         (
@@ -1595,15 +1561,12 @@ impl Ctx {
         let mut root = builtin("$global").cloned().unwrap_or_default();
         root.merge(&doc_style);
         self.doc_inh = root.inherited();
-        // 和我们 docx 的默认字体一样的文种不写，再渲染时走内置默认字体组；
-        // 下面的元素照样按带着它的 doc_inh 比，不会每段都写一遍
-        let mut d = doc.clone();
-        drop_docx_default_fonts(&mut d);
-        if !d.is_empty() {
+        // 正文默认字体照 docx 原样写，Arial、PingFang SC 也一样；
+        // 下面的元素按带着它的 doc_inh 比，不会每段都写一遍
+        if !doc.is_empty() {
+            let mut d = doc.clone();
             compact(&mut d);
             self.out_styles.insert("Document".into(), Value::Object(d));
-        }
-        if !doc.is_empty() {
             self.comp.insert("Document".into(), doc_style);
         }
         // Text：Normal 的段落间距这些，按多数正文段落改

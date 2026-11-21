@@ -135,9 +135,8 @@ document-render parse report.docx -o out/report.json --assets img   # 图片导�
 - 大多数正文段落共用的字体、字号、行距写进 `styles` 的 `Document`；正文的段前段后、首行缩进写进 `Text`；各级标题写进 `Heading.1` 这些键。
 - 其他用到的 Word 段落样式和字符样式写成同名的命名样式（和组件名重名时前面加 `Word `），元素用 `style` 引用。
 - 字体一律写英文族名：宋体写成 SimSun，微软雅黑写成 Microsoft YaHei，主题字体换成主题里的实际字体。
-- 正文默认字体里，和我们写 docx 时的默认字体一样的那个文种不写：西文、复杂文种是 Arial，东亚是 PingFang SC。这样读回的 JSON 再渲染走内置默认字体组，没装 Arial、苹方的机器也能出 pdf。别的软件做的 docx，正文默认字体正好是 Arial 的也会去掉；在别的字体下面专门改回 Arial 的地方照样读回。
 - 字体按文种读：只写和上面传下来不一样的文种。
-- 读回的字体照 docx 原样，写的是 Menlo 就读成 Menlo。跨系统字体兼容由写文档的人负责，document-render 不替他兜底。
+- 读回的字体照 docx 原样：正文默认字体是 Arial、PingFang SC 就写 Arial、PingFang SC，代码是 Menlo 就写 Menlo。没装这些字体的机器再出 pdf 会报缺字体，要出就加 `--allow-missing-fonts`。跨系统字体兼容由写文档的人负责，document-render 不替他兜底。
 
 还不支持、会给警告的：
 

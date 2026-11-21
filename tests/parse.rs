@@ -17,7 +17,7 @@ fn to_docx(json: &str) -> Vec<u8> {
         .bytes
 }
 
-/// 读回的 JSON 再渲染时用：代码字体照 docx 原样读回 Menlo，本机不一定有，放行缺字体。
+/// 读回的 JSON 再渲染时用：字体照 docx 原样读回（Arial、PingFang SC、Menlo），本机不一定有，放行缺字体。
 fn allow_missing() -> document_render::Env {
     document_render::Env {
         allow_missing_fonts: true,
@@ -423,7 +423,7 @@ fn page_number_formats_and_column_breaks_come_back() {
     assert_eq!(cbs, 1);
     // 再渲染回 docx，页码格式还在
     let text = serde_json::to_string(&parsed.json).unwrap();
-    let again = document_render::render_str(&text, Format::Docx, None).unwrap();
+    let again = document_render::render_with(&text, Format::Docx, None, &allow_missing()).unwrap();
     let x = String::from_utf8_lossy(&again.bytes);
     assert!(x.contains(r#"w:fmt="lowerRoman""#));
     assert!(x.contains(r#"w:fmt="chineseCounting""#));
@@ -532,7 +532,7 @@ fn white_table_header_stays_white() {
     assert_eq!(t["parts"]["header"]["background"], "none", "{t}");
     assert_eq!(t["props"]["columns"][1]["style"]["background"], "#DDEEFF");
     let text = serde_json::to_string(&parsed.json).unwrap();
-    let again = document_render::render_str(&text, Format::Docx, None).unwrap();
+    let again = document_render::render_with(&text, Format::Docx, None, &allow_missing()).unwrap();
     let again = String::from_utf8_lossy(&again.bytes);
     assert!(!again.contains("F3F3F3"));
     assert!(again.contains("<w:tblHeader"));
@@ -600,7 +600,7 @@ fn word_auto_line_spacing_comes_back_as_multiple() {
     assert!(!text.contains(r#""lineHeight":{"multiple":1.5}"#), "{text}");
     // 第二轮不变
     let again = parse(
-        &document_render::render_str(&text, Format::Docx, None)
+        &document_render::render_with(&text, Format::Docx, None, &allow_missing())
             .unwrap()
             .bytes,
     );
@@ -632,21 +632,26 @@ fn doc_grid_lines_warns() {
     assert!(!plain.warnings.iter().any(|w| w.contains("docGrid")));
 }
 
-/// 读回字体时，和我们 docx 默认字体（Arial、PingFang SC）一样的文种不写进 JSON，
-/// 再渲染走内置默认字体组；代码字体照 docx 原样读成 Menlo。
+/// 读回字体照 docx 原样：正文默认字体 Arial、PingFang SC 和代码的 Menlo 都写进 JSON，
+/// 不替写文档的人换成内置默认字体组。
 #[test]
-fn docx_default_fonts_are_not_read_back() {
+fn docx_default_fonts_are_read_back_as_is() {
     use document_render::fonts::{DOCX_DEFAULT_EAST_ASIA, DOCX_DEFAULT_LATIN};
     let json = r#"{"root":"d","elements":{"d":{"type":"Document","children":["h","a","c"]},"h":{"type":"Heading","props":{"text":"标题 Title","level":1}},"a":{"type":"Text","props":{"text":["中文 abc ",{"type":"InlineCode","text":"x = 1"}]}},"c":{"type":"Code","props":{"code":"let x = 1;"}}}}"#;
     let docx = to_docx(json);
     let parsed = parse(&docx);
     let text = serde_json::to_string(&parsed.json).unwrap();
-    assert!(!text.contains(DOCX_DEFAULT_LATIN), "{text}");
-    assert!(!text.contains(DOCX_DEFAULT_EAST_ASIA), "{text}");
+    // 正文默认字体写在 styles.Document 里，西文 Arial、东亚 PingFang SC
+    let doc = &parsed.json["styles"]["Document"]["fontFamily"];
+    assert_eq!(doc["latin"], DOCX_DEFAULT_LATIN, "{text}");
+    assert_eq!(doc["eastAsia"], DOCX_DEFAULT_EAST_ASIA, "{text}");
+    // 下面的元素从 Document 继承，不每段抄一遍
+    let els = serde_json::to_string(&parsed.json["elements"]).unwrap();
+    assert!(!els.contains(DOCX_DEFAULT_EAST_ASIA), "{els}");
     // 代码字体照 docx 原样读回 Menlo，不换成内置等宽列表
     assert!(text.contains(r#""Menlo""#), "{text}");
     assert!(!text.contains("DejaVu Sans Mono"), "{text}");
-    // 正文走内置默认字体组，Linux 上有一个就行；只有代码的 Menlo 算缺
+    // 只装了 Linux 字体的机器：读回的 Arial、PingFang SC、Menlo 都算缺
     let (d, t) = document_render::prepare(&text, &env()).unwrap();
     let only_linux = |n: &str| {
         matches!(
@@ -656,19 +661,10 @@ fn docx_default_fonts_are_not_read_back() {
     };
     let miss = document_render::fonts::missing_with(&d, &t, &only_linux);
     let miss_text = format!("{miss:?}");
-    assert!(
-        !miss.is_empty() && miss_text.contains("Menlo"),
-        "{miss_text}\n{text}"
-    );
-    for f in [
-        "Arial",
-        "PingFang SC",
-        "Liberation Sans",
-        "Noto Sans CJK SC",
-    ] {
-        assert!(!miss_text.contains(f), "{miss_text}");
+    for f in ["Arial", "PingFang SC", "Menlo"] {
+        assert!(miss_text.contains(f), "{f}：{miss_text}\n{text}");
     }
-    // 本机不一定装了 Menlo：往返出文件时放行缺字体
+    // 本机不一定装了这些字体：往返出文件时放行缺字体
     let allow = allow_missing();
     let pdf = document_render::render_with(&text, Format::Pdf, None, &allow).unwrap();
     assert!(pdf.bytes.starts_with(b"%PDF-"));
@@ -681,9 +677,9 @@ fn docx_default_fonts_are_not_read_back() {
     assert_eq!(parsed.json, again.json);
 }
 
-/// 只去掉和默认一样的那个文种；别的字体、以及在别的字体下面显式写回 Arial 的地方照样读回。
+/// 别的字体照样读回；在别的字体下面显式写回 Arial 的地方也读回。
 #[test]
-fn only_the_matching_default_slot_is_dropped() {
+fn other_fonts_and_explicit_arial_are_read_back() {
     let json = r#"{"root":"d","elements":{
       "d":{"type":"Document","style":{"fontFamily":{"latin":"Libertinus Serif"}},"children":["a","b"]},
       "a":{"type":"Text","props":{"text":"中文 abc"}},
@@ -691,7 +687,7 @@ fn only_the_matching_default_slot_is_dropped() {
     }}"#;
     let parsed = parse(&to_docx(json));
     let doc = &parsed.json["styles"]["Document"]["fontFamily"];
-    // 西文是 Libertinus Serif，留着；东亚没写，docx 里是根上的西文字体（不是默认的 PingFang SC），也留着
+    // 西文是 Libertinus Serif；东亚没写，docx 里是根上的西文字体，不是默认的 PingFang SC
     assert_eq!(doc["latin"], "Libertinus Serif", "{}", parsed.json);
     assert!(
         doc.get("eastAsia").is_none_or(|v| v != "PingFang SC"),
