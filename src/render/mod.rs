@@ -51,6 +51,8 @@ pub struct Options {
     /// 只对 HTML 有用：内嵌 Paged.js，在屏幕上按页显示（像 Google Docs 那样），
     /// 分页、表头重复不用打印也能看到。
     pub paged: bool,
+    /// pdf、docx：本机找不到文档用到的字体时照常出文件，只给警告（默认报错，见 crate::fonts）。
+    pub allow_missing_fonts: bool,
 }
 
 /// 渲染结果：文件内容加警告。
@@ -59,11 +61,26 @@ pub struct Output {
     pub warnings: Vec<String>,
 }
 
+/// 渲染。pdf、docx 先查字体：文档用到的字体本机没有就报错，`allow_missing_fonts` 时改成警告。
+/// html、Markdown 不查，浏览器自己回退。
 pub fn render(doc: &Doc, tree: &Node, format: Format, opts: &Options) -> Result<Output> {
-    match format {
-        Format::Html => Ok(html::render(doc, tree, opts)),
-        Format::Docx => docx::render(doc, tree, opts),
-        Format::Pdf => pdf::render(doc, tree, opts),
-        Format::Markdown => Ok(markdown::render(doc, tree, opts)),
+    let mut font_warnings = Vec::new();
+    if matches!(format, Format::Pdf | Format::Docx) {
+        let miss = crate::fonts::missing(doc, tree);
+        if !miss.is_empty() {
+            if !opts.allow_missing_fonts {
+                bail!("{}", crate::fonts::error_message(&miss, format));
+            }
+            font_warnings = crate::fonts::warnings(&miss, format);
+        }
     }
+    let mut out = match format {
+        Format::Html => html::render(doc, tree, opts),
+        Format::Docx => docx::render(doc, tree, opts)?,
+        Format::Pdf => pdf::render(doc, tree, opts)?,
+        Format::Markdown => markdown::render(doc, tree, opts),
+    };
+    font_warnings.append(&mut out.warnings);
+    out.warnings = font_warnings;
+    Ok(out)
 }

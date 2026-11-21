@@ -40,6 +40,9 @@ pub struct Doc {
     /// 自定义组件名，展开时填，用来分辨 styles 的键
     #[serde(skip)]
     pub custom_names: Vec<String>,
+    /// 文件里读来的样式集（--style-sets、styles/ 目录），prepare 时填；报缺字体时找它写在哪个键里
+    #[serde(skip)]
+    pub external_style_sets: BTreeMap<String, crate::cascade::StyleSetDef>,
 }
 
 #[derive(Debug, Default, Deserialize)]

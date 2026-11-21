@@ -15,7 +15,8 @@ document-render 把一份 JSON 文档渲染成 docx、pdf、html，也能出 Mar
 - 内置组件：Heading、Text、Code、Math（块级公式）、List、Table、Image、PageBreak、ColumnBreak（分栏符）、Divider（分割线）、Quote（引用）、Callout（提示框）、TableOfContents（目录）、Slide、Section（分节），外加根组件 Document；行内有 InlineCode 和 InlineMath（行内公式），都写在 runs 里。
 - 命令行：
   - `document-render render doc.json -o out.docx`：按输出文件的扩展名选格式。
-  - `document-render check doc.json`：只校验，不出文件。
+  - `document-render check doc.json`：只校验，不出文件。用到的字体本机没有也算错。
+  - 出 pdf、docx 前先查字体，本机找不到就报错、不出文件；加 `--allow-missing-fonts` 降为警告。规则见 [STYLE.md](STYLE.md)「字体要装在本机」。
   - `document-render catalog`：列出能用的组件，加 `--json` 输出 schema（还带容器标记和能单独设样式的部位 `parts`）。
   - `document-render parse doc.docx -o doc.json`：反过来，从 Word 文档解析出 JSON，图片导到 `doc.assets/`。见下面「从 docx 解析」。
   - 输入写 `-` 从标准输入读；输出写 `-` 时配 `--format` 写到标准输出。
@@ -81,7 +82,7 @@ document-render 把一份 JSON 文档渲染成 docx、pdf、html，也能出 Mar
 
 pdf 用 Typst 排版，有这些不同：
 
-- 中文用系统字体：macOS 上是苹方，Linux 上是 Noto Sans CJK。都没有时退回 Typst 自带字体，中文可能显示不全。
+- 中文用系统字体：macOS 上是苹方，Linux 上是 Noto Sans CJK。默认中文字体一个都没有、或者文档写的字体本机没装，都会报错；加 `--allow-missing-fonts` 才退回默认字体照常出，中文可能显示不全。
 - 中文字体没有斜体，`italic` 对中文不起作用。
 - 支持 SVG；远程图片暂不支持，改成显示 alt 文字。
 - 颜色只认十六进制写法，比如 `#c00`、`#1a73e8`。
@@ -152,8 +153,8 @@ document-render parse report.docx -o out/report.json --assets img   # 图片导�
 
 | 工具 | 参数 | 返回 |
 | --- | --- | --- |
-| `render` | `document`（必填）、`output`、`format`、`paged`、`style_set`、`style_sets`、`catalog`、`base_dir` | `path`（绝对路径）、`format`、`bytes`、`warnings` |
-| `check` | `document`（必填）、`catalog`、`style_sets`、`style_set`、`base_dir` | `ok`、`errors`、`warnings`、`elements`（展开后的元素个数） |
+| `render` | `document`（必填）、`output`、`format`、`paged`、`style_set`、`style_sets`、`catalog`、`base_dir`、`allow_missing_fonts` | `path`（绝对路径）、`format`、`bytes`、`warnings` |
+| `check` | `document`（必填）、`catalog`、`style_sets`、`style_set`、`base_dir`、`allow_missing_fonts` | `ok`、`errors`、`warnings`、`elements`（展开后的元素个数） |
 | `list_components` | `catalog` | 组件名到说明的对象，跟 `catalog --json` 一样 |
 | `parse` | `input`（必填，docx 路径）、`output`、`assets` | 写了 `output` 时是 `path`；没写时 JSON 放在 `document` 里，另带 `base_dir`。都带 `assets`（图片目录和张数）、`warnings` |
 | `guide` | 无 | 写文档指南 docs/AGENT.md 全文，放在 `content` 的文字里 |
@@ -167,7 +168,7 @@ document-render parse report.docx -o out/report.json --assets img   # 图片导�
 - `base_dir` 相当于命令行里文档所在的目录：相对路径的图片按它找，它下面的 `catalog/`、`styles/` 自动读。不写时图片按 `output` 所在目录找，再没有就按 server 的当前目录找，`catalog/`、`styles/` 不自动读。
 - `parse` 不写 `output` 时，图片导到 docx 旁边的「文件名.assets/」，结果里的 `base_dir` 就是 docx 所在目录。再拿这份 JSON 去 render，把 `base_dir` 设成它，图片才找得到。
 - 相对路径按 server 的当前目录算（`render` 的 `output` 先按 `base_dir` 算）。客户端启动 server 时当前目录不一定是哪儿，所以最好都写绝对路径。
-- 出错时返回 `isError: true` 的工具结果，文字是中文错误信息，带出错的元素 id，server 不退出。`check` 发现文档有错不算工具出错，返回 `ok: false`。参数缺了或类型不对（比如少了 `document`）也返回 `isError`，这条错误信息是 MCP 库给的英文。
+- 出错时返回 `isError: true` 的工具结果，文字是中文错误信息，带出错的元素 id，server 不退出。`check` 发现文档有错不算工具出错，返回 `ok: false`；本机缺字体也算文档有错，`allow_missing_fonts: true` 时改放进 `warnings`。参数缺了或类型不对（比如少了 `document`）也返回 `isError`，这条错误信息是 MCP 库给的英文。
 
 ### 客户端配置
 

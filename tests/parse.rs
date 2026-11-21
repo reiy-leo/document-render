@@ -7,8 +7,18 @@ use document_render::doc::Node;
 use document_render::render::Format;
 use serde_json::Value;
 
+/// 读回来的 JSON 带着 Word 里的字体（Arial、PingFang SC……），本机不一定有；这里测的是结构，缺字体只给警告。
 fn env() -> document_render::Env {
-    document_render::load_env(Some(Path::new("examples")), &[], &[], None).unwrap()
+    let mut e = document_render::load_env(Some(Path::new("examples")), &[], &[], None).unwrap();
+    e.allow_missing_fonts = true;
+    e
+}
+
+fn lenient() -> document_render::Env {
+    document_render::Env {
+        allow_missing_fonts: true,
+        ..Default::default()
+    }
 }
 
 fn to_docx(json: &str) -> Vec<u8> {
@@ -146,7 +156,7 @@ fn examples_round_trip_structure() {
         headings(&back.1, &mut b);
         assert_eq!(a, b, "{name}：标题文字对不上");
         // 解析出来的 JSON 能再渲染成 docx
-        let again = document_render::render_str(&text, Format::Docx, None).unwrap();
+        let again = document_render::render_with(&text, Format::Docx, None, &lenient()).unwrap();
         assert!(again.bytes.starts_with(b"PK"));
     }
 }
@@ -162,7 +172,7 @@ fn second_round_is_stable() {
         for (n, b) in &first.assets {
             std::fs::write(dir.join("x.assets").join(n), b).unwrap();
         }
-        let docx = document_render::render_str(&text, Format::Docx, Some(&dir))
+        let docx = document_render::render_with(&text, Format::Docx, Some(&dir), &lenient())
             .unwrap()
             .bytes;
         let second = parse(&docx);
@@ -336,7 +346,7 @@ fn images_are_exported_next_to_json() {
         "p": { "type": "Text", "props": { "text": ["前", { "image": "dot.png", "text": "行内小点", "width": 16, "height": 8 }, "后"] } }
       }
     }"##;
-    let docx = document_render::render_str(json, Format::Docx, Some(&dir))
+    let docx = document_render::render_with(json, Format::Docx, Some(&dir), &lenient())
         .unwrap()
         .bytes;
     // 替代文字写进 wp:docPr 的 descr，每张图的 id 不重复
@@ -414,7 +424,7 @@ fn page_number_formats_and_column_breaks_come_back() {
     assert_eq!(cbs, 1);
     // 再渲染回 docx，页码格式还在
     let text = serde_json::to_string(&parsed.json).unwrap();
-    let again = document_render::render_str(&text, Format::Docx, None).unwrap();
+    let again = document_render::render_with(&text, Format::Docx, None, &lenient()).unwrap();
     let x = String::from_utf8_lossy(&again.bytes);
     assert!(x.contains(r#"w:fmt="lowerRoman""#));
     assert!(x.contains(r#"w:fmt="chineseCounting""#));
@@ -474,7 +484,7 @@ fn image_alt_falls_back_to_title() {
         .unwrap();
     std::fs::rename(&tmp, dir.join("dot.png")).unwrap();
     let json = r#"{"root":"d","elements":{"d":{"type":"Document","children":["i"]},"i":{"type":"Image","props":{"src":"dot.png","width":20}}}}"#;
-    let docx = document_render::render_str(json, Format::Docx, Some(&dir))
+    let docx = document_render::render_with(json, Format::Docx, Some(&dir), &lenient())
         .unwrap()
         .bytes;
     // 没写 descr、只有 title 的图（别的软件这么存）
@@ -507,7 +517,7 @@ fn white_table_header_stays_white() {
     assert!(!x.contains("F3F3F3"), "docx 不该有灰底");
     assert!(x.contains("DDEEFF"));
     assert!(x.contains("<w:tblHeader"), "表头跨页重复");
-    let h = document_render::render_str(WHITE_HEADER, Format::Html, None).unwrap();
+    let h = document_render::render_with(WHITE_HEADER, Format::Html, None, &lenient()).unwrap();
     let h = String::from_utf8(h.bytes).unwrap();
     assert!(!h.to_uppercase().contains("F3F3F3"), "html 不该有灰底");
     assert!(h.to_uppercase().contains("DDEEFF"));
@@ -523,7 +533,7 @@ fn white_table_header_stays_white() {
     assert_eq!(t["parts"]["header"]["background"], "none", "{t}");
     assert_eq!(t["props"]["columns"][1]["style"]["background"], "#DDEEFF");
     let text = serde_json::to_string(&parsed.json).unwrap();
-    let again = document_render::render_str(&text, Format::Docx, None).unwrap();
+    let again = document_render::render_with(&text, Format::Docx, None, &lenient()).unwrap();
     let again = String::from_utf8_lossy(&again.bytes);
     assert!(!again.contains("F3F3F3"));
     assert!(again.contains("<w:tblHeader"));
@@ -591,7 +601,7 @@ fn word_auto_line_spacing_comes_back_as_multiple() {
     assert!(!text.contains(r#""lineHeight":{"multiple":1.5}"#), "{text}");
     // 第二轮不变
     let again = parse(
-        &document_render::render_str(&text, Format::Docx, None)
+        &document_render::render_with(&text, Format::Docx, None, &lenient())
             .unwrap()
             .bytes,
     );

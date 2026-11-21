@@ -15,7 +15,8 @@ document-render 把一份 JSON 文档排成 docx、pdf、html 或 Markdown（md�
 | `document-render render doc.json -o out.docx` | 按扩展名选格式：`.docx` `.pdf` `.html`/`.htm` `.md`/`.markdown`；`-f/--format` 优先 |
 | `document-render render doc.json -o - -f html` | 输出写 `-` 时必须给 `--format` |
 | `document-render render doc.json -o out.html --paged` | html 内嵌 Paged.js，按页显示 |
-| `document-render check doc.json` | 只校验，成功打印 `ok：展开后 N 个元素`；公式解析不了打警告 |
+| `document-render check doc.json` | 只校验，成功打印 `ok：展开后 N 个元素`；公式解析不了打警告；用到的字体本机没有算错 |
+| `document-render render doc.json -o out.pdf --allow-missing-fonts` | 本机缺字体时照常出 pdf、docx，只给警告（默认报错，不出文件）；`check` 也认这个参数 |
 | `document-render catalog [--json] [--catalog 目录]` | 列组件；`--json` 带 props 的 JSON Schema、`container`、`parts` |
 | `document-render parse in.docx -o out.json [--assets 目录]` | docx 解析成 JSON，图片默认导到 `out.assets/` |
 | `document-render guide` | 打印本文 |
@@ -27,8 +28,8 @@ document-render 把一份 JSON 文档排成 docx、pdf、html 或 Markdown（md�
 
 | 工具 | 参数 | 返回 |
 |---|---|---|
-| `render` | `document`（必填，对象或 JSON 字符串）、`output`、`format`（html/docx/pdf/md）、`paged`、`style_set`、`style_sets`、`catalog`、`base_dir` | `path`、`format`、`bytes`、`warnings`；不写 `output` 时只能出 html/md，返回 `content` |
-| `check` | `document`（必填）、`catalog`、`style_sets`、`style_set`、`base_dir` | `ok`、`errors`、`warnings`、`elements` |
+| `render` | `document`（必填，对象或 JSON 字符串）、`output`、`format`（html/docx/pdf/md）、`paged`、`style_set`、`style_sets`、`catalog`、`base_dir`、`allow_missing_fonts` | `path`、`format`、`bytes`、`warnings`；不写 `output` 时只能出 html/md，返回 `content` |
+| `check` | `document`（必填）、`catalog`、`style_sets`、`style_set`、`base_dir`、`allow_missing_fonts` | `ok`、`errors`、`warnings`、`elements` |
 | `list_components` | `catalog` | 组件名 → `{ description, container, parts, props, custom }` |
 | `parse` | `input`（必填，docx 路径）、`output`、`assets` | 写了 `output` 返回 `path`；没写返回 `document` 和 `base_dir`；都带 `assets`、`warnings` |
 | `guide` | 无 | 本文全文（`text`） |
@@ -37,6 +38,7 @@ document-render 把一份 JSON 文档排成 docx、pdf、html 或 Markdown（md�
 - `catalog`、`style_sets` 写一个路径或路径数组。路径一律写绝对路径。
 - `base_dir` = 文档所在目录：相对路径的图片按它找，它下面的 `catalog/`、`styles/` 自动读。
 - `check` 发现文档有错返回 `ok: false`，不算工具出错；参数本身不对才返回 `isError`。
+- 字体缺了：出 pdf、docx 前先查文档用到的字体，本机没有就报错、不出文件，错误里列出每个缺的字体、用到它的元素 id 和写在哪个样式键；`check` 把它们算进 `errors`。设 `allow_missing_fonts: true` 降为警告。html、md 不查。规则见 4.1 的「字体要装在本机」。
 
 ## 2. 文档结构
 
@@ -509,7 +511,7 @@ run 对象字段（多写会报错）：
 
 | 字段 | 取值 | 说明 |
 |---|---|---|
-| `fontFamily` | 字体 | 写英文族名：`SimSun`、`Microsoft YaHei`、`PingFang SC`、`Noto Sans CJK SC` |
+| `fontFamily` | 字体 | 写英文族名：`SimSun`、`Microsoft YaHei`、`PingFang SC`、`Noto Sans CJK SC`；本机要装着，见下 |
 | `fontSize` | 长度 | 默认 10.5pt |
 | `color` | 颜色 | |
 | `bold` `italic` | 布尔 | 中文字体没有斜体（pdf） |
@@ -518,6 +520,15 @@ run 对象字段（多写会报错）：
 | `strike` | 布尔或 `"double"` | |
 | `verticalAlign` | `super` `sub` | 上下标；盒子/图片上另有 `top` `middle` `bottom` |
 | `caps` | `all` `small` | 全大写 / 小型大写 |
+
+字体要装在本机（出 pdf、docx 时检查，`check` 也查）：
+
+- 自己写的字体，每个名字都要找得到。逗号分开的回退列表也是每一项都要有，有一个没装就报错。
+- 中文名（`宋体`、`微软雅黑`、`思源黑体` 这类常见字体）会换成英文族名再找，但最好直接写英文族名。
+- 不写字体时用内置默认：西文 Helvetica Neue / Arial / Liberation Sans，中文 PingFang SC / Hiragino Sans GB / Microsoft YaHei / Noto Sans CJK SC / Source Han Sans SC，代码 Menlo / Consolas / DejaVu Sans Mono。每组按系统挑着用，一组里一个都没有才报错。
+- 找的范围和 pdf 排版用的一样：系统字体加 Typst 自带字体（Libertinus Serif、New Computer Modern、DejaVu Sans Mono）。
+- docx 也查：本机没有，就没法确认打开文件的电脑有没有。确定对方有这个字体时，用 `--allow-missing-fonts`（MCP 是 `allow_missing_fonts: true`）放行，缺的字体变成警告。
+- 列表符号字体 `listMarkerFont` 也算。html、md 不查，浏览器自己回退。
 | `letterSpacing` | 长度 | 字间距 |
 | `highlight` | 颜色 | 高亮 |
 | `emphasisMark` | `dot` `comma` `circle` `underDot` | 着重号 |
@@ -936,8 +947,8 @@ prop `type`：`string`（默认）`number` `integer` `boolean` `array` `object` 
 
 ## 7. 各格式差异（要点）
 
-- docx：图片只收 png/jpeg/gif/webp，SVG 和远程图片变成 `[alt]` 加警告。段落 `padding` 只在有 `border` 时生效。目录要在 Word 里更新域才有页码。每节末尾多一个空段落放节设置。字体只写回退列表里的第一个。
-- pdf（Typst）：字体按英文族名在本机找，找不到退回默认字体并给警告。中文没有斜体。支持 SVG，不支持远程图片。颜色只认十六进制。
+- docx：本机缺字体同样报错（见 4.1）。图片只收 png/jpeg/gif/webp，SVG 和远程图片变成 `[alt]` 加警告。段落 `padding` 只在有 `border` 时生效。目录要在 Word 里更新域才有页码。每节末尾多一个空段落放节设置。字体只写回退列表里的第一个。
+- pdf（Typst）：字体按英文族名在本机找，找不到就报错（`--allow-missing-fonts` 时退回默认字体并给警告）。中文没有斜体。支持 SVG，不支持远程图片。颜色只认十六进制。
 - html：默认一长条网页，分页、页眉页脚、表头重复只在打印时出现；`--paged`/`paged: true` 才按页显示并填页码。公式写成 MathML。
 - md：只留结构；合并格的表格写成内嵌 HTML，Callout 写成 `> [!NOTE]`，公式写成 `$…$`/`$$…$$`；样式、分栏、ColumnBreak 都丢掉。
 - 表达不了的样式一律警告不报错，所以「`check` 通过」不代表每个样式在每种格式里都生效。
@@ -955,7 +966,8 @@ prop `type`：`string`（默认）`number` `integer` `boolean` `array` `object` 
 | props 拼错：`"lineNumber"`、`"rowspan"`、`"colspan"` | 报错 unknown field | `lineNumbers`、`rowSpan`、`colSpan` |
 | 样式字段拼错：`"font-size"`、`"fontWeight"` | 报错 | `fontSize`、`bold: true` |
 | 颜色写 `"red"`、`"1A73E8"` | 报错 | `"#FF0000"`、`"#1A73E8"` |
-| `fontFamily` 写中文名 `"宋体"`、`"微软雅黑"` | pdf 找不到字体退回默认并警告，行高也算不准 | 英文族名 `"SimSun"`、`"Microsoft YaHei"`，可写回退列表 |
+| `fontFamily` 写中文名 `"宋体"`、`"微软雅黑"` | 常见字体能认出来，冷门的找不到就报错 | 英文族名 `"SimSun"`、`"Microsoft YaHei"` |
+| 回退列表写了本机没装的字体 `"Times New Roman, Liberation Serif"` | 出 pdf、docx 时报错「本机找不到字体」 | 只写本机有的；确实要给别的电脑用，加 `--allow-missing-fonts` / `allow_missing_fonts: true` |
 | `lineHeight: 20` 想要 20pt | 变成 20 倍行距 | `"20pt"` |
 | Image 的 `width: "100pt"` | 报错，只收数字 | `width: 100` |
 | run 上写 `"strike": true`、`"fontSize": 12` | 报错，run 只有几个简写 | 写进 run 的 `style` |

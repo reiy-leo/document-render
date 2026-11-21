@@ -105,6 +105,9 @@ struct RenderParams {
     /// 文档所在目录：文档里相对路径的图片按它找，它下面的 catalog/、styles/ 会自动读，跟命令行读文件时一样。
     /// 不写时图片按 output 所在目录找（没有 output 就按 server 的当前目录），也不自动读 catalog/、styles/。
     base_dir: Option<PathBuf>,
+    /// 只对 pdf、docx 有用：文档用到的字体本机找不到时照常出文件，缺的字体放进 warnings（默认报错，不出文件）
+    #[serde(default)]
+    allow_missing_fonts: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -119,6 +122,9 @@ struct CheckParams {
     style_set: Option<String>,
     /// 文档所在目录，它下面的 catalog/、styles/ 会自动读
     base_dir: Option<PathBuf>,
+    /// 本机找不到的字体放进 warnings，不算错（默认算错，跟 render 出 pdf、docx 时一样）
+    #[serde(default)]
+    allow_missing_fonts: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -156,7 +162,8 @@ impl Server {
         name = "render",
         description = "把 document-render 的 JSON 文档渲染成文件：docx、pdf、html 或 md（Markdown，只留结构）。\
 格式按 output 的扩展名选，也可以用 format 指定。成功时返回写出的绝对路径 path、格式 format 和警告 warnings（某个格式表达不了的样式会给警告，不算错）。\
-不写 output 时只能出 html 或 md，返回的 content 就是文本内容。文档有错时返回错误，错误信息里带出错的元素 id。"
+不写 output 时只能出 html 或 md，返回的 content 就是文本内容。文档有错时返回错误，错误信息里带出错的元素 id。\
+出 pdf、docx 时先查字体：文档用到的字体本机没有就报错、不出文件，错误里列出每个缺的字体、用到它的元素和写在哪个样式键；设 allow_missing_fonts 降为警告。"
     )]
     async fn render(&self, Parameters(p): Parameters<RenderParams>) -> CallToolResult {
         blocking(move || render_tool(p)).await
@@ -164,7 +171,7 @@ impl Server {
 
     #[tool(
         name = "check",
-        description = "只校验文档，不出文件：检查组件名、props、样式、children 引用和自定义组件展开，再看公式能不能解析。\
+        description = "只校验文档，不出文件：检查组件名、props、样式、children 引用和自定义组件展开，再看公式能不能解析、用到的字体本机有没有（缺字体算错，设 allow_missing_fonts 降为警告）。\
 返回 ok（是否通过）、errors（错误，带元素 id）、warnings（警告，比如解析不了的公式会显示成 LaTeX 原文）和 elements（展开后的元素个数）。"
     )]
     async fn check(&self, Parameters(p): Parameters<CheckParams>) -> CallToolResult {
@@ -357,6 +364,7 @@ fn render_tool(p: RenderParams) -> Result<Value> {
         &render::Options {
             base_dir: Some(image_dir),
             paged: p.paged,
+            allow_missing_fonts: p.allow_missing_fonts,
         },
     )?;
     warnings.extend(out.warnings);
@@ -398,12 +406,22 @@ fn check_tool(p: CheckParams) -> Result<Value> {
     let text = document_text(&p.document)?;
     let env = load_env(base_dir.as_deref(), &p.catalog, &p.style_sets, p.style_set)?;
     Ok(match document_render::prepare(&text, &env) {
-        Ok((d, tree)) => json!({
-            "ok": true,
-            "errors": [],
-            "warnings": document_render::check_math(&tree),
-            "elements": d.elements.len(),
-        }),
+        Ok((d, tree)) => {
+            let mut warnings = document_render::check_math(&tree);
+            let fonts = document_render::check_fonts(&d, &tree);
+            let errors = if p.allow_missing_fonts {
+                warnings.extend(fonts);
+                Vec::new()
+            } else {
+                fonts
+            };
+            json!({
+                "ok": errors.is_empty(),
+                "errors": errors,
+                "warnings": warnings,
+                "elements": d.elements.len(),
+            })
+        }
         Err(e) => json!({
             "ok": false,
             "errors": [format!("{e:#}")],

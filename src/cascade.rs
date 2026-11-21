@@ -532,7 +532,7 @@ fn parse_obj(v: &Value) -> Result<Style> {
 pub(crate) fn builtin(key: &str) -> Option<&'static Style> {
     static B: OnceLock<BTreeMap<String, Style>> = OnceLock::new();
     B.get_or_init(|| {
-        let mono = json!({ "latin": "Menlo, Consolas, DejaVu Sans Mono" });
+        let mono = json!({ "latin": crate::fonts::DEFAULT_MONO.join(", ") });
         let raw = json!({
             "$global": { "fontSize": 10.5, "lineHeight": 1.5 },
             "Heading": { "bold": true, "keepWithNext": true, "spaceBefore": 12, "spaceAfter": 6, "lineHeight": 1.25 },

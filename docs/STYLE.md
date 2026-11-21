@@ -64,6 +64,19 @@ document-render 的样式以 OOXML 为准：先把 Word、PowerPoint、Excel 能
 
 写成字符串时三项都用它。代码用什么字体不在这里定，写在 `InlineCode` 和 `Code` 组件的样式里（见第十三节）。Excel 一个单元格只能有一种字体：有中文内容取 `eastAsia`，否则取 `latin`。HTML、PDF 拼成回退列表：`latin, eastAsia`。
 
+### 字体要装在本机
+
+渲染 pdf 和 docx 之前，先把文档实际用到的字体都找一遍（Rei 2026-11-21 定：「最开始就检查字体，如果字体不存在就报错」）。找不到就报错，不出文件。
+
+- 查哪些：样式集展开、层叠算完以后，每个元素、每个 run、每个部位、每个格子实际用的 `fontFamily`（三个文种都算），加上 `listMarkerFont`。标题、代码、列表符号、页眉页脚里的都算。
+- 在哪找：和 pdf 排版同一套字体，系统字体加 Typst 自带字体（Libertinus Serif、New Computer Modern、DejaVu Sans Mono 等）。中文名（宋体、微软雅黑、思源黑体……）按内置对照表换成英文族名再找；pdf 排版时也用换过的名字。
+- 自己写的字体：每个族名都要找得到，逗号分开的回退列表也是每一项都要有。
+- 内置默认字体：西文 Helvetica Neue、Arial、Liberation Sans；中文 PingFang SC、Hiragino Sans GB、Microsoft YaHei、Noto Sans CJK SC、Source Han Sans SC；代码 Menlo、Consolas、DejaVu Sans Mono。这是按系统挑着用的备选，一组里一个都没有才报错。哪段文字用不到某一组（比如没有中文），这一组就不查。
+- 报错是中文，每个缺的字体一行：族名、用到它的元素 id（多了只列前五个，写「等 12 处」），还有写在哪个样式键里，比如 `styles.正文`、`styleSets.formal.global`、`元素 t1 的 style`。
+- 放行：命令行 `--allow-missing-fonts`，MCP 的 `render`、`check` 写 `allow_missing_fonts: true`。缺的字体变成警告，照常出文件：pdf 里换成默认字体，docx 里照写字体名。
+- docx 也报错：本机没有这个字体，就没法确认打开文件的那台电脑有没有。确定对方装了，就用上面的参数放行。
+- html、Markdown 不查，浏览器自己回退。`check` 不分格式，也把缺的字体算成错误，加参数时降为警告。
+
 ## 三、段落（对应 w:pPr、a:pPr、xlsx alignment）
 
 | 字段 | 值 | Word w:pPr | PPT a:pPr | Excel alignment | HTML | PDF |

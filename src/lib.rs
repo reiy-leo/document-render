@@ -5,6 +5,7 @@ pub mod cascade;
 pub mod components;
 pub mod custom;
 pub mod doc;
+pub mod fonts;
 pub mod math;
 pub mod parse;
 pub mod render;
@@ -32,6 +33,8 @@ pub struct Env {
     pub style_sets: BTreeMap<String, cascade::StyleSetDef>,
     /// 命令行 --style-set，优先于文档的 styleSet
     pub style_set: Option<String>,
+    /// 本机找不到字体时只给警告（命令行 --allow-missing-fonts），给 [`render_with`] 用
+    pub allow_missing_fonts: bool,
 }
 
 /// 解析、展开自定义组件、算样式、校验，得到可以渲染的文档和元素树。
@@ -47,6 +50,7 @@ pub fn prepare(json: &str, env: &Env) -> Result<(doc::Doc, doc::Node)> {
     }
     all.expand(&mut d)?;
     d.custom_names = all.defs().map(|x| x.name.clone()).collect();
+    d.external_style_sets = env.style_sets.clone();
     let sheet = cascade::Sheet::build(&d, &env.style_sets, env.style_set.as_deref())?;
     let tree = d.tree_with(&sheet)?;
     Ok((d, tree))
@@ -85,6 +89,12 @@ pub fn check_math(tree: &doc::Node) -> Vec<String> {
     out
 }
 
+/// 文档用到、本机又没有的字体，每个一条说明。check 用；渲染 pdf、docx 时同样的检查在
+/// [`render::render`] 里做，找不到就报错（除非 `allow_missing_fonts`）。规则见 [`fonts`]。
+pub fn check_fonts(d: &doc::Doc, tree: &doc::Node) -> Vec<String> {
+    fonts::check_messages(&fonts::missing(d, tree))
+}
+
 /// 从 JSON 文本直接渲染，命令行和 MCP 都走这里。
 /// `base_dir` 是文档所在目录，用来找相对路径的图片；没有就按当前目录找。
 pub fn render_with(
@@ -100,6 +110,7 @@ pub fn render_with(
         format,
         &render::Options {
             base_dir: base_dir.map(Into::into),
+            allow_missing_fonts: env.allow_missing_fonts,
             ..Default::default()
         },
     )

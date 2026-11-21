@@ -132,6 +132,7 @@ fn mcp_end_to_end() {
         "style_set",
         "catalog",
         "base_dir",
+        "allow_missing_fonts",
     ] {
         assert!(props.get(k).is_some(), "render 缺参数 {k}：{render}");
     }
@@ -262,9 +263,50 @@ fn mcp_end_to_end() {
     let back: Value = serde_json::from_str(&std::fs::read_to_string(&json_out).unwrap()).unwrap();
     assert_eq!(&back, parsed);
 
-    // 解析出来的 JSON 能再 check 通过
-    let (_, out) = c.call("check", json!({ "document": back }));
+    // 解析出来的 JSON 能再 check 通过（里面带着 Word 的字体，本机不一定有，缺字体降为警告）
+    let (_, out) = c.call(
+        "check",
+        json!({ "document": back, "allow_missing_fonts": true }),
+    );
     assert_eq!(out["ok"], true, "{out}");
+
+    // 字体缺了：check 算错，render 出 docx 报错不出文件；allow_missing_fonts 降为警告
+    let mut nofont = hello();
+    nofont["elements"]["title"]["style"] = json!({ "fontFamily": "DR Missing Font Zz" });
+    let (_, out) = c.call("check", json!({ "document": nofont }));
+    assert_eq!(out["ok"], false, "{out}");
+    let e = out["errors"][0].as_str().unwrap();
+    assert!(
+        e.contains("DR Missing Font Zz") && e.contains("title"),
+        "{e}"
+    );
+    let (_, out) = c.call(
+        "check",
+        json!({ "document": nofont, "allow_missing_fonts": true }),
+    );
+    assert_eq!(out["ok"], true, "{out}");
+    assert!(
+        out["warnings"].to_string().contains("DR Missing Font Zz"),
+        "{out}"
+    );
+    let nf = dir.join("nofont.docx");
+    let (err, msg) = c.call("render", json!({ "document": nofont, "output": nf }));
+    assert!(err, "{msg}");
+    assert!(
+        msg.as_str().unwrap().contains("allow_missing_fonts"),
+        "{msg}"
+    );
+    assert!(!nf.exists());
+    let (err, out) = c.call(
+        "render",
+        json!({ "document": nofont, "output": nf, "allow_missing_fonts": true }),
+    );
+    assert!(!err, "{out}");
+    assert!(
+        out["warnings"].to_string().contains("DR Missing Font Zz"),
+        "{out}"
+    );
+    assert!(nf.exists());
 
     // parse：文件不存在是工具错误
     let (err, msg) = c.call("parse", json!({ "input": dir.join("nope.docx") }));

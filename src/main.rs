@@ -59,12 +59,18 @@ enum Cmd {
         /// 只对 HTML 有用：内嵌 Paged.js，打开就按页显示（分页、表头重复不用打印也看得到）
         #[arg(long)]
         paged: bool,
+        /// pdf、docx：本机找不到文档用到的字体时照常出文件，只给警告（默认报错）
+        #[arg(long)]
+        allow_missing_fonts: bool,
         #[command(flatten)]
         defs: Defs,
     },
-    /// 只校验，不出文件
+    /// 只校验，不出文件（本机找不到的字体也算错）
     Check {
         input: PathBuf,
+        /// 本机找不到字体时只给警告，不算校验没通过
+        #[arg(long)]
+        allow_missing_fonts: bool,
         #[command(flatten)]
         defs: Defs,
     },
@@ -118,6 +124,7 @@ fn main() -> Result<()> {
             output,
             format,
             paged,
+            allow_missing_fonts,
             defs,
         } => {
             let fmt = match &format {
@@ -133,7 +140,16 @@ fn main() -> Result<()> {
             let env = defs.env(&input)?;
             let (d, tree) = document_render::prepare(&text, &env)
                 .with_context(|| format!("{} 不是合法的 document-render 文档", input.display()))?;
-            let out = render::render(&d, &tree, fmt, &render::Options { base_dir, paged })?;
+            let out = render::render(
+                &d,
+                &tree,
+                fmt,
+                &render::Options {
+                    base_dir,
+                    paged,
+                    allow_missing_fonts,
+                },
+            )?;
             for w in &out.warnings {
                 eprintln!("警告：{w}");
             }
@@ -146,13 +162,32 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
-        Cmd::Check { input, defs } => {
+        Cmd::Check {
+            input,
+            allow_missing_fonts,
+            defs,
+        } => {
             let text = read_input(&input)?;
             let env = defs.env(&input)?;
             let (d, tree) = document_render::prepare(&text, &env)
                 .with_context(|| format!("{} 校验没通过", input.display()))?;
             for w in document_render::check_math(&tree) {
                 eprintln!("警告：{w}");
+            }
+            let fonts = document_render::check_fonts(&d, &tree);
+            if allow_missing_fonts {
+                for w in &fonts {
+                    eprintln!("警告：{w}");
+                }
+            } else if !fonts.is_empty() {
+                for e in &fonts {
+                    eprintln!("错误：{e}");
+                }
+                bail!(
+                    "{} 校验没通过：本机找不到 {} 个字体（加 --allow-missing-fonts 降为警告）",
+                    input.display(),
+                    fonts.len()
+                );
             }
             println!("ok：展开后 {} 个元素", d.elements.len());
             Ok(())

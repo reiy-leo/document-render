@@ -40,7 +40,8 @@ const FORMAT: &str = "pdf";
 
 /// 默认字体顺序：西文无衬线在前，中文按 macOS、Linux、Windows 常见字体排，
 /// 最后是 typst 自带字体兜底。typst 按字形逐个往后找。
-const FONTS: &[&str] = &[
+/// 前两组和 fonts::DEFAULT_LATIN、DEFAULT_CJK 一样（有测试对着）。
+pub(crate) const FONTS: &[&str] = &[
     "Helvetica Neue",
     "Arial",
     "Liberation Sans",
@@ -51,7 +52,7 @@ const FONTS: &[&str] = &[
     "Source Han Sans SC",
     "Libertinus Serif",
 ];
-const MONO_FONTS: &[&str] = &["Menlo", "Consolas", "DejaVu Sans Mono"];
+const MONO_FONTS: &[&str] = crate::fonts::DEFAULT_MONO;
 /// 公式字体，typst 自带。
 const MATH_FONT: &str = "New Computer Modern Math";
 
@@ -79,20 +80,14 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> anyhow::Result<Output> 
         world = DocumentRenderWorld::new(source.clone(), again.files);
         warned = typst::compile::<PagedDocument>(&world);
     }
-    let fallbacks = fallback_fonts(&source);
     for w in warned.warnings.iter() {
-        // 默认字体列表本来就是按平台挑着用的，找不到不算问题
+        // 字体找不到的情况渲染前已经查过（crate::fonts），报错或给了警告；默认字体列表本来就是按平台挑着用的
         let msg = w.message.to_string();
-        // 用户写成回退列表的字体（逗号分开的几个），找不到前面的也正常
-        let default_font = msg.strip_prefix("unknown font family: ").is_some_and(|f| {
-            FONTS
-                .iter()
-                .chain(MONO_FONTS)
-                .any(|d| d.eq_ignore_ascii_case(f))
-                || fallbacks.iter().any(|d| d.eq_ignore_ascii_case(f))
-        });
+        if msg.starts_with("unknown font family: ") {
+            continue;
+        }
         let w = format!("typst：{msg}");
-        if !default_font && !warnings.contains(&w) {
+        if !warnings.contains(&w) {
             warnings.push(w);
         }
     }
@@ -105,29 +100,6 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> anyhow::Result<Output> 
         anyhow::anyhow!("生成 PDF 失败：{}", msgs.join("；"))
     })?;
     Ok(Output { bytes, warnings })
-}
-
-/// 源码里所有字体列表中的名字（只要列表里不止一个用户字体就算回退）。
-fn fallback_fonts(source: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for line in source.split("font: (").skip(1) {
-        let Some(list) = line.split_once(')') else {
-            continue;
-        };
-        let names: Vec<String> = list
-            .0
-            .split("\", \"")
-            .map(|x| {
-                x.trim_matches(|c| c == '"' || c == ',' || c == ' ')
-                    .to_string()
-            })
-            .filter(|x| !FONTS.contains(&x.as_str()) && !MONO_FONTS.contains(&x.as_str()))
-            .collect();
-        if names.len() > 1 {
-            out.extend(names);
-        }
-    }
-    out
 }
 
 /// 图片虚拟文件：路径和内容。
@@ -1656,7 +1628,8 @@ fn font_list(s: &Style, mono: bool) -> String {
     if let Some(f) = &s.font_family {
         for x in f.fallback() {
             for y in x.split(',') {
-                let y = y.trim().to_string();
+                // 中文名（宋体）换成本机认的英文族名（SimSun）
+                let y = crate::fonts::resolve(y).unwrap_or_else(|| y.trim().to_string());
                 if !y.is_empty() && !v.contains(&y) {
                     v.push(y);
                 }

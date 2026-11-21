@@ -5,7 +5,12 @@
 use document_render::{Env, render::Format};
 
 fn render(json: &str, f: Format) -> Vec<u8> {
-    document_render::render_with(json, f, None, &Env::default())
+    // 测的是列表，不管本机有没有样例里的字体
+    let env = Env {
+        allow_missing_fonts: true,
+        ..Env::default()
+    };
+    document_render::render_with(json, f, None, &env)
         .unwrap_or_else(|e| panic!("{f:?}: {e:#}"))
         .bytes
 }

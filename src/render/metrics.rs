@@ -192,7 +192,9 @@ fn parse_os2(d: &[u8]) -> Option<Os2> {
 /// 按字体名找本机（typst 自带加系统）字体的原始度量，有缓存。找不到是 None。
 pub fn family_raw(name: &str) -> Option<RawMetrics> {
     static CACHE: OnceLock<Mutex<HashMap<String, Option<RawMetrics>>>> = OnceLock::new();
-    let key = name.trim().to_lowercase();
+    let key = crate::fonts::resolve(name)
+        .unwrap_or_else(|| name.trim().to_string())
+        .to_lowercase();
     if key.is_empty() {
         return None;
     }
