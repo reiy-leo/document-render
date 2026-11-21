@@ -234,9 +234,14 @@ fn parse_reads_item_children() {
     // 「列表后面」还是 Document 下的段落
     let root = &els[doc["root"].as_str().unwrap()]["children"];
     assert_eq!(root.as_array().unwrap().len(), 2, "{doc}");
-    // 再渲染：续块位置一样
+    // 再渲染：续块位置一样。代码读回的是 docx 里的 Menlo，本机不一定有，放行缺字体
     let again = serde_json::to_string(&doc).unwrap();
-    let d2 = unzip(&render(&again, Format::Docx), "word/document.xml");
+    let allow = Env {
+        allow_missing_fonts: true,
+        ..Env::default()
+    };
+    let d2 = document_render::render_with(&again, Format::Docx, None, &allow).unwrap();
+    let d2 = unzip(&d2.bytes, "word/document.xml");
     assert!(
         d2.contains("<w:ind w:left=\"800\"") && d2.contains("<w:tblInd w:w=\"400\""),
         "{d2}"

@@ -17,6 +17,14 @@ fn to_docx(json: &str) -> Vec<u8> {
         .bytes
 }
 
+/// 读回的 JSON 再渲染时用：代码字体照 docx 原样读回 Menlo，本机不一定有，放行缺字体。
+fn allow_missing() -> document_render::Env {
+    document_render::Env {
+        allow_missing_fonts: true,
+        ..Default::default()
+    }
+}
+
 fn parse(bytes: &[u8]) -> document_render::parse::Parsed {
     document_render::parse::docx(
         bytes,
@@ -146,7 +154,8 @@ fn examples_round_trip_structure() {
         headings(&back.1, &mut b);
         assert_eq!(a, b, "{name}：标题文字对不上");
         // 解析出来的 JSON 能再渲染成 docx
-        let again = document_render::render_str(&text, Format::Docx, None).unwrap();
+        let again =
+            document_render::render_with(&text, Format::Docx, None, &allow_missing()).unwrap();
         assert!(again.bytes.starts_with(b"PK"));
     }
 }
@@ -162,7 +171,7 @@ fn second_round_is_stable() {
         for (n, b) in &first.assets {
             std::fs::write(dir.join("x.assets").join(n), b).unwrap();
         }
-        let docx = document_render::render_str(&text, Format::Docx, Some(&dir))
+        let docx = document_render::render_with(&text, Format::Docx, Some(&dir), &allow_missing())
             .unwrap()
             .bytes;
         let second = parse(&docx);
@@ -624,7 +633,7 @@ fn doc_grid_lines_warns() {
 }
 
 /// 读回字体时，和我们 docx 默认字体（Arial、PingFang SC）一样的文种不写进 JSON，
-/// 再渲染走内置默认字体组；本机没有 Arial 也能出 pdf。
+/// 再渲染走内置默认字体组；代码字体照 docx 原样读成 Menlo。
 #[test]
 fn docx_default_fonts_are_not_read_back() {
     use document_render::fonts::{DOCX_DEFAULT_EAST_ASIA, DOCX_DEFAULT_LATIN};
@@ -634,9 +643,10 @@ fn docx_default_fonts_are_not_read_back() {
     let text = serde_json::to_string(&parsed.json).unwrap();
     assert!(!text.contains(DOCX_DEFAULT_LATIN), "{text}");
     assert!(!text.contains(DOCX_DEFAULT_EAST_ASIA), "{text}");
-    // 代码读回整条内置等宽列表，不是单独一个 Menlo
-    assert!(!text.contains(r#""Menlo""#), "{text}");
-    // 往返 pdf 不再因为缺字体失败：默认字体组一组有一个就行
+    // 代码字体照 docx 原样读回 Menlo，不换成内置等宽列表
+    assert!(text.contains(r#""Menlo""#), "{text}");
+    assert!(!text.contains("DejaVu Sans Mono"), "{text}");
+    // 正文走内置默认字体组，Linux 上有一个就行；只有代码的 Menlo 算缺
     let (d, t) = document_render::prepare(&text, &env()).unwrap();
     let only_linux = |n: &str| {
         matches!(
@@ -645,12 +655,26 @@ fn docx_default_fonts_are_not_read_back() {
         )
     };
     let miss = document_render::fonts::missing_with(&d, &t, &only_linux);
-    assert!(miss.is_empty(), "{miss:?}\n{text}");
-    let pdf = document_render::render_str(&text, Format::Pdf, None).unwrap();
+    let miss_text = format!("{miss:?}");
+    assert!(
+        !miss.is_empty() && miss_text.contains("Menlo"),
+        "{miss_text}\n{text}"
+    );
+    for f in [
+        "Arial",
+        "PingFang SC",
+        "Liberation Sans",
+        "Noto Sans CJK SC",
+    ] {
+        assert!(!miss_text.contains(f), "{miss_text}");
+    }
+    // 本机不一定装了 Menlo：往返出文件时放行缺字体
+    let allow = allow_missing();
+    let pdf = document_render::render_with(&text, Format::Pdf, None, &allow).unwrap();
     assert!(pdf.bytes.starts_with(b"%PDF-"));
     // 第二轮一样
     let again = parse(
-        &document_render::render_str(&text, Format::Docx, None)
+        &document_render::render_with(&text, Format::Docx, None, &allow)
             .unwrap()
             .bytes,
     );

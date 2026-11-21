@@ -529,7 +529,8 @@ run 对象字段（多写会报错）：
 - 找的范围和 pdf 排版用的一样：系统字体加 Typst 自带字体（Libertinus Serif、New Computer Modern、DejaVu Sans Mono）。
 - docx 也查：本机没有，就没法确认打开文件的电脑有没有。确定对方有这个字体时，用 `--allow-missing-fonts`（MCP 是 `allow_missing_fonts: true`）放行，缺的字体变成警告。
 - 列表符号字体 `listMarkerFont` 也算。html、md 不查，浏览器自己回退。
-- `parse` 读回的 JSON 不带 document-render 写 docx 时的默认字体：正文默认字体里西文是 Arial、东亚是 PingFang SC 的那一项不写，再渲染走内置默认字体组。别的 docx 正文默认字体正好是 Arial 的也一样去掉。读到 Menlo 时读回整条内置等宽列表。
+- `parse` 读回的 JSON 不带 document-render 写 docx 时的默认字体：正文默认字体里西文是 Arial、东亚是 PingFang SC 的那一项不写，再渲染走内置默认字体组。别的 docx 正文默认字体正好是 Arial 的也一样去掉。
+- 除此以外，读回的字体照 docx 原样，Menlo 就读成 Menlo。跨系统字体兼容由写文档的人负责，document-render 不替他兜底。
 | `letterSpacing` | 长度 | 字间距 |
 | `highlight` | 颜色 | 高亮 |
 | `emphasisMark` | `dot` `comma` `circle` `underDot` | 着重号 |
