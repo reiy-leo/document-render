@@ -76,7 +76,7 @@ pub fn check_math(tree: &doc::Node) -> Vec<String> {
                 ));
             }
         }
-        for k in &n.children {
+        for k in n.children.iter().chain(n.list_blocks()) {
             walk(k, out);
         }
     }

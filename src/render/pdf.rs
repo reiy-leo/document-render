@@ -1053,6 +1053,14 @@ impl Markup<'_> {
                 .map(|f| (f, s.list_marker_size.map_or(1.0, |p| p / 100.0)));
             body.push_str(&self.block_src(line, &ls, &n.style, &n.id));
             self.marker_font = None;
+            // 这一项的续块：左边对齐到项的文字
+            for b in l.item.blocks() {
+                let b = common::indented_block(b, indent);
+                let saved = std::mem::take(&mut self.out);
+                self.node(&b, &n.style);
+                let got = std::mem::replace(&mut self.out, saved);
+                body.push_str(&got);
+            }
         }
         self.block(body, &n.style, parent, &n.id);
     }
@@ -1065,10 +1073,11 @@ impl Markup<'_> {
             .map(|x| x.pt(s.size_pt(), 0.0))
             .unwrap_or(4.0);
         let ws = common::col_widths(p, &g, &mut self.warn, &n.id);
+        let indent = s.margin_left.map_or(0.0, |x| x.pt(s.size_pt(), 0.0));
         let avail = match s.width {
-            Some(Len::Pct(x)) => self.content_width * x / 100.0,
+            Some(Len::Pct(x)) => (self.content_width - indent) * x / 100.0,
             Some(w) => w.abs_pt(),
-            None => self.content_width,
+            None => self.content_width - indent,
         };
         let nat = common::auto_natural(n, p, &g, &ws, pad);
         let widths: Vec<String> = common::resolve_auto(&ws, &nat, avail)

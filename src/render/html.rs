@@ -820,6 +820,11 @@ impl Html<'_> {
             self.out.push_str("</span>");
             self.inline_in(l.item.text(), &n.style, &item, &n.id);
             self.out.push_str("</div>\n");
+            // 这一项的续块：左边对齐到项的文字
+            for b in l.item.blocks() {
+                let b = common::indented_block(b, indent);
+                self.node(&b, Some(&n.style));
+            }
         }
         self.out.push_str("</div>\n");
     }
@@ -841,16 +846,25 @@ impl Html<'_> {
             .cell_padding
             .map(|x| x.pt(s.size_pt(), 0.0))
             .unwrap_or(4.0);
+        let indent = s.margin_left.map_or(0.0, |x| x.pt(s.size_pt(), 0.0));
         let avail = match s.width {
-            Some(Len::Pct(x)) => self.content_width * x / 100.0,
+            Some(Len::Pct(x)) => (self.content_width - indent) * x / 100.0,
             Some(w) => w.abs_pt(),
-            None => self.content_width,
+            None => self.content_width - indent,
         };
         let nat = common::auto_natural(n, p, &g, &ws, pad_pt);
         let ws = common::resolve_auto(&ws, &nat, avail);
         let has_auto = ws.contains(&ColWidth::Auto);
         if s.width.is_none() && common::fills_width(&ws) {
-            css.push_str("width:100%;");
+            // 有左右缩进（如列表项里的表格）时宽度扣掉缩进，不然会伸出版心
+            let fs = s.size_pt();
+            let side = s.margin_left.map_or(0.0, |x| x.pt(fs, 0.0))
+                + s.margin_right.map_or(0.0, |x| x.pt(fs, 0.0));
+            if side != 0.0 {
+                let _ = write!(css, "width:calc(100% - {side}pt);");
+            } else {
+                css.push_str("width:100%;");
+            }
         }
         // 有 auto 列时用自动布局，浏览器才会按内容撑开
         let layout =

@@ -257,7 +257,8 @@ pub struct MathProps {
     pub number: Option<EqNumber>,
 }
 
-/// 列表项：文字，或带子列表的 { text, items, ordered }。
+/// 列表项：文字，或写成对象 { text, children, items, ordered }：
+/// children 是这一项正文后面接着的块（段落、表格、图片、代码等元素的 id），items 是子列表。
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum ListItem {
@@ -268,7 +269,16 @@ pub enum ListItem {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NestedItem {
+    #[serde(default)]
     pub text: Inline,
+    /// 这一项里接在文字后面的块：elements 里 Text、Table、Image、Code、Math、Quote、Callout、Divider 的 id，
+    /// 按顺序排在文字之后、子列表之前，左边和这一项的文字对齐
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<String>,
+    /// 建树时按 children 建好的元素，不出现在 JSON 里
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub blocks: Vec<crate::doc::Node>,
     #[serde(default)]
     pub items: Vec<ListItem>,
     /// 子列表要不要编号，不写跟上一级一样
@@ -305,6 +315,13 @@ impl ListItem {
         match self {
             ListItem::Plain(_) => None,
             ListItem::Nested(n) => n.ordered,
+        }
+    }
+    /// 接在这一项文字后面的块（建树以后才有）。
+    pub fn blocks(&self) -> &[crate::doc::Node] {
+        match self {
+            ListItem::Plain(_) => &[],
+            ListItem::Nested(n) => &n.blocks,
         }
     }
 }

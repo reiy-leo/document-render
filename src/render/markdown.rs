@@ -212,7 +212,26 @@ impl Md<'_> {
             let cont = " ".repeat(marker.len() + 1);
             let text = hard_breaks(&text).replace('\n', &format!("\n{cont}"));
             let _ = writeln!(out, "{marker} {text}");
+            // 续块：各自成块，前面空一行，缩进到这一项文字的位置（GFM 的列表项续行）
+            for b in it.blocks() {
+                let saved = std::mem::take(&mut self.blocks);
+                self.node(b);
+                let got = std::mem::replace(&mut self.blocks, saved);
+                for blk in got {
+                    out.push('\n');
+                    for line in blk.lines() {
+                        if line.is_empty() {
+                            out.push('\n');
+                        } else {
+                            let _ = writeln!(out, "{cont}{line}");
+                        }
+                    }
+                }
+            }
             let kids = it.children();
+            if !kids.is_empty() && !it.blocks().is_empty() {
+                out.push('\n');
+            }
             if !kids.is_empty() {
                 let o = it.ordered().unwrap_or(ordered);
                 // 子列表缩进到父项文字对齐的位置

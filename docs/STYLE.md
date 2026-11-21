@@ -267,6 +267,17 @@ Word 的列表定义在 numbering.xml：`w:abstractNum` 下每一级一个 `w:lv
 - pdf、html：算好起始号，直接写编号文字。md：写算好的数字。
 - parse：正文里不挨着的两组段落用同一个 numId（或者同一个 abstractNum、后一个 num 第一级没写 startOverride）时，后一组读成带 `continueFrom` 的 List。
 
+### 列表项里的块（项的 `children`）
+
+列表项写成对象时，`children` 里按顺序写元素 id（`Text`、`Table`、`Image`、`Code`、`Math`、`Quote`、`Callout`、`Divider`），这些块排在这一项文字后面、子列表（`items`）前面，是这一项的一部分。和 Word 里「同一项按 Shift+Enter 或无编号续段」一样，块不带编号，左边对齐到这一项的文字。
+
+- 左边位置 = 这一级的 `listIndent` × 级数，也就是这一级文字开始的地方。实现上就是在块自己的 `marginLeft` 上加这个数，块别的样式照常。
+- docx：段落写 w:ind left（没有 hanging、firstLine，不带 w:numPr）；表格写 w:tblInd，撑满的表格宽度扣掉缩进；图片、代码、公式都在段落上缩进。
+- pdf、html：块的左外边距加上缩进；撑满的表格宽度扣掉缩进。
+- md：按 GFM 列表项的续块写，前面空一行，每行缩进到编号后文字的位置。
+- 校验：引用的元素要存在、只能被引用一次、类型在上面的名单里，否则 check 报错，报错里带第几项（子列表的项写成「2.1」）。
+- parse：一组编号段落里，紧跟在某项后面、没有编号、左缩进和那一项这一级的文字对齐（差不到 1 缇），而且没有首行缩进、悬挂缩进的段落，读回成这一项的 `children`；表格看 w:tblInd。标题、目录、带分节符的段落不算。判定不上的照旧读成列表后面的普通段落，宁可多断开，不乱并。
+
 ### 标题编号（`Heading`、`Heading.N` 上的列表字段）
 
 标题的自动编号沿用列表字段，写在组件样式 `Heading`（所有级别）或 `Heading.N`（某一级）上，只看样式表里写的值，不看继承来的：

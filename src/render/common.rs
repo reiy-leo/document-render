@@ -196,6 +196,22 @@ impl Walk {
     }
 }
 
+/// 这一级列表项文字的左边位置（离列表左边），pt：listIndent × 级数。
+/// 编号在它左边 listHanging 处；项里的续块（children）左边对齐到这里。
+pub fn item_text_indent(s: &Style, level: usize) -> f32 {
+    let fs = s.size_pt();
+    s.list_indent.map(|x| x.pt(fs, 0.0)).unwrap_or(18.0) * level as f32
+}
+
+/// 列表项续块：在块自己的左缩进上加 `indent` pt，对齐到这一项的文字。
+pub fn indented_block(b: &Node, indent: f32) -> Node {
+    let mut b = b.clone();
+    let fs = b.style.size_pt();
+    let ml = b.style.margin_left.map_or(0.0, |l| l.pt(fs, 0.0));
+    b.style.margin_left = Some(Len::Pt(ml + indent));
+    b
+}
+
 /// 相邻两项之间按 itemSpacing 算的距离：第 i 个是第 i 项和第 i+1 项之间。
 /// 用两项里层级深的那一项的 itemSpacing（子列表首项和父项之间、末项和下一个父项之间都算子列表那一层）；
 /// 那一层没写 itemSpacing 时是 None，照旧用 item 部位的段前段后。

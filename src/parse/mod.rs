@@ -943,7 +943,8 @@ impl Ctx {
     }
 
     fn blocks_in(&mut self, parent: Node, out: &mut Vec<String>, body: bool) {
-        let mut list: Option<(ListRef, Vec<Para>)> = None;
+        // 正在收的列表：(编号, 各项段落, 各项后面接着的续块元素 id)
+        let mut list: Option<(ListRef, Vec<Para>, Vec<Vec<String>>)> = None;
         let kids: Vec<Node> = parent.children().filter(|c| c.is_element()).collect();
         for n in kids {
             if isw(n, "p") {
@@ -953,7 +954,7 @@ impl Ctx {
                     match &mut list {
                         // 同一个 num 接着收；更深一级、换了 num 的段落（同一级里类型不同的子列表
                         // 会单开 num）算当前项的子列表
-                        Some((cur, items))
+                        Some((cur, items, conts))
                             if cur.num_id == lr.num_id
                                 || items
                                     .iter()
@@ -961,20 +962,21 @@ impl Ctx {
                                     .min()
                                     .is_some_and(|m| lr.ilvl > m) =>
                         {
-                            items.push(para.clone())
+                            items.push(para.clone());
+                            conts.push(Vec::new());
                         }
                         _ => {
                             if let Some(l) = list.take() {
-                                out.push(self.list(l.0, l.1));
+                                out.push(self.list(l.0, l.1, l.2));
                             }
-                            list = Some((lr, vec![para.clone()]));
+                            list = Some((lr, vec![para.clone()], vec![Vec::new()]));
                         }
                     }
                     self.last_table = None;
                     if let Some(s) = para.sect.clone() {
                         let _ = s;
                         if let Some(l) = list.take() {
-                            out.push(self.list(l.0, l.1));
+                            out.push(self.list(l.0, l.1, l.2));
                         }
                         if body {
                             self.end_section(out);
@@ -982,8 +984,33 @@ impl Ctx {
                     }
                     continue;
                 }
+                // 列表项的续块：没有编号、左缩进和上一项文字对齐的段落
+                if let Some((_, items, conts)) = &mut list {
+                    let left = item_text_left(items.last().unwrap());
+                    // 续块表格后面那个 1pt 的空段落：照常并进表格的段后间距，列表不断开
+                    if para.segs.is_empty()
+                        && self.last_table.is_some()
+                        && para.ppr.line_rule.as_deref() == Some("exact")
+                        && para.ppr.line.is_some_and(|l| l <= 40.0)
+                        && conts.last().is_some_and(|c| !c.is_empty())
+                    {
+                        let mut tmp = Vec::new();
+                        self.paragraph(para, &mut tmp);
+                        conts.last_mut().unwrap().extend(tmp);
+                        continue;
+                    }
+                    if is_continuation(&para, left, &self.styles) {
+                        let mut tmp = Vec::new();
+                        self.paragraph(para, &mut tmp);
+                        for id in &tmp {
+                            self.strip_indent(id, left / 20.0);
+                        }
+                        conts.last_mut().unwrap().extend(tmp);
+                        continue;
+                    }
+                }
                 if let Some(l) = list.take() {
-                    out.push(self.list(l.0, l.1));
+                    out.push(self.list(l.0, l.1, l.2));
                 }
                 let has_sect = para.sect.is_some();
                 self.paragraph(para, out);
@@ -991,8 +1018,29 @@ impl Ctx {
                     self.end_section(out);
                 }
             } else if isw(n, "tbl") {
+                // 列表项里的表格：w:tblInd 和上一项文字对齐
+                if let Some((_, items, conts)) = &mut list
+                    && !self.in_toc()
+                {
+                    let left = item_text_left(items.last().unwrap());
+                    let ind = child(n, "tblPr")
+                        .and_then(|p| child(p, "tblInd"))
+                        .filter(|i| wa(*i, "type").is_none_or(|t| t == "dxa"))
+                        .and_then(|i| wa(i, "w"))
+                        .and_then(|w| w.parse::<f32>().ok());
+                    if left > 0.0 && ind.is_some_and(|i| (i - left).abs() <= 1.0) {
+                        // 表格比版心窄了缩进那么多，按缩进后的宽度判断撑不撑满
+                        let saved = self.content_width;
+                        self.content_width -= left / 20.0;
+                        let id = self.table(n);
+                        self.content_width = saved;
+                        conts.last_mut().unwrap().push(id.clone());
+                        self.last_table = Some(id);
+                        continue;
+                    }
+                }
                 if let Some(l) = list.take() {
-                    out.push(self.list(l.0, l.1));
+                    out.push(self.list(l.0, l.1, l.2));
                 }
                 if self.in_toc() {
                     continue;
@@ -1002,14 +1050,14 @@ impl Ctx {
                 self.last_table = Some(id);
             } else if isw(n, "sdt") {
                 if let Some(l) = list.take() {
-                    out.push(self.list(l.0, l.1));
+                    out.push(self.list(l.0, l.1, l.2));
                 }
                 if let Some(c) = child(n, "sdtContent") {
                     self.blocks(c, out, body);
                 }
             } else if isw(n, "customXml") || isw(n, "ins") || isw(n, "moveTo") {
                 if let Some(l) = list.take() {
-                    out.push(self.list(l.0, l.1));
+                    out.push(self.list(l.0, l.1, l.2));
                 }
                 self.blocks(n, out, body);
             } else if isw(n, "altChunk") {
@@ -1018,7 +1066,51 @@ impl Ctx {
             }
         }
         if let Some(l) = list.take() {
-            out.push(self.list(l.0, l.1));
+            out.push(self.list(l.0, l.1, l.2));
+        }
+    }
+
+    /// 续块元素的样式去掉对齐到列表文字的那段左缩进（它由列表项的位置决定，不写在块上）。
+    fn strip_indent(&mut self, id: &str, left_pt: f32) {
+        let Some(Value::Object(el)) = self.elements.get_mut(id) else {
+            return;
+        };
+        let strip = |m: &mut Map<String, Value>| {
+            if let Some(v) = m.get("marginLeft") {
+                let pt = v.as_f64().map(|x| x as f32).or_else(|| {
+                    v.as_str()
+                        .and_then(|t| t.strip_suffix("pt"))
+                        .and_then(|t| t.parse::<f32>().ok())
+                });
+                match pt {
+                    Some(x) if (x - left_pt).abs() < 0.1 => {
+                        m.remove("marginLeft");
+                    }
+                    Some(x) => {
+                        m.insert("marginLeft".into(), json!(round2(x - left_pt)));
+                    }
+                    None => {}
+                }
+            }
+        };
+        let mut empty = false;
+        match el.get_mut("style") {
+            Some(Value::Object(m)) => {
+                strip(m);
+                empty = m.is_empty();
+            }
+            Some(Value::Array(a)) => {
+                if let Some(Value::Object(m)) = a.last_mut() {
+                    strip(m);
+                    if m.is_empty() {
+                        a.pop();
+                    }
+                }
+            }
+            _ => {}
+        }
+        if empty {
+            el.remove("style");
         }
     }
 
@@ -2583,7 +2675,7 @@ impl Ctx {
 
     // ---------- 列表 ----------
 
-    fn list(&mut self, lr: ListRef, items: Vec<Para>) -> String {
+    fn list(&mut self, lr: ListRef, items: Vec<Para>, conts: Vec<Vec<String>>) -> String {
         let levels = &lr.levels;
         let min_lvl = items
             .iter()
@@ -2930,13 +3022,15 @@ impl Ctx {
         // 项：按层级嵌套
         struct It {
             text: Value,
+            /// 续块元素 id
+            blocks: Vec<String>,
             kids: Vec<It>,
             ordered: Option<bool>,
             /// 这一项所在的那串列表有没有编号
             own: bool,
         }
         let mut root: Vec<It> = Vec::new();
-        for p in &items {
+        for (p, cont) in items.iter().zip(conts) {
             let l = p
                 .list
                 .as_ref()
@@ -2952,6 +3046,7 @@ impl Ctx {
                 if cur.is_empty() {
                     cur.push(It {
                         text: json!(""),
+                        blocks: Vec::new(),
                         kids: Vec::new(),
                         ordered: None,
                         own: ordered_at.get(depth).copied().unwrap_or(ordered),
@@ -2978,6 +3073,7 @@ impl Ctx {
             };
             cur.push(It {
                 text,
+                blocks: cont,
                 kids: Vec::new(),
                 ordered: None,
                 own,
@@ -2988,10 +3084,16 @@ impl Ctx {
                 items
                     .into_iter()
                     .map(|it| {
-                        if it.kids.is_empty() {
+                        if it.kids.is_empty() && it.blocks.is_empty() {
                             it.text
                         } else {
-                            let mut m = json!({ "text": it.text, "items": to_json(it.kids) });
+                            let mut m = json!({ "text": it.text });
+                            if !it.blocks.is_empty() {
+                                m["children"] = json!(it.blocks);
+                            }
+                            if !it.kids.is_empty() {
+                                m["items"] = to_json(it.kids);
+                            }
                             if let Some(o) = it.ordered {
                                 m["ordered"] = json!(o);
                             }
@@ -3214,6 +3316,37 @@ impl Ctx {
         self.hf_cache.insert(rel.target, out.clone());
         out
     }
+}
+
+/// 列表项这一段文字的左边（缇）：编号定义或段落自己写的 w:ind left。
+fn item_text_left(p: &Para) -> f32 {
+    p.ppr.ind.left.unwrap_or(0.0)
+}
+
+/// 列表项后面这一段能不能算这一项的续块：没有编号、不是标题和目录、不带分节符和分页符，
+/// 左缩进和项的文字对齐（差不到 1 缇），没有首行缩进和悬挂缩进。判定从严，拿不准就不算。
+fn is_continuation(para: &Para, left: f32, styles: &Styles) -> bool {
+    if left <= 0.0
+        || para.list.is_some()
+        || para.heading_num.is_some()
+        || para.sect.is_some()
+        || para.toc.is_some()
+        || para.in_toc
+        || para.segs.is_empty()
+        || para.segs.iter().any(Seg::is_break)
+        || para
+            .pstyle
+            .as_deref()
+            .is_some_and(|s| styles.heading_level(s).is_some())
+    {
+        return false;
+    }
+    let ind = &para.ppr.ind;
+    let no_first = ind.first_line.is_none_or(|x| x.abs() < 0.5)
+        && ind.hanging.is_none_or(|x| x.abs() < 0.5)
+        && ind.first_line_chars.is_none_or(|x| x.abs() < 0.5)
+        && ind.hanging_chars.is_none_or(|x| x.abs() < 0.5);
+    no_first && ind.left.is_some_and(|l| (l - left).abs() <= 1.0)
 }
 
 fn is_code_bg(bg: &style::Background) -> bool {

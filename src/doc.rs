@@ -524,6 +524,21 @@ impl Node {
     pub fn part(&self, name: &str) -> Style {
         self.parts.get(name).cloned().unwrap_or_default()
     }
+
+    /// 列表各项（含子列表的项）children 里的块，按文档顺序；不是列表时为空。
+    pub fn list_blocks(&self) -> Vec<&Node> {
+        fn items<'a>(xs: &'a [components::ListItem], out: &mut Vec<&'a Node>) {
+            for it in xs {
+                out.extend(it.blocks());
+                items(it.children(), out);
+            }
+        }
+        let mut out = Vec::new();
+        if let Component::List(p) = &self.component {
+            items(&p.items, &mut out);
+        }
+        out
+    }
 }
 
 pub fn load(path: &Path) -> Result<Doc> {
@@ -809,6 +824,10 @@ impl Doc {
                     .with_context(|| format!("在 `{id}` 的子元素里"))?,
             );
         }
+        if let Component::List(p) = &mut component {
+            let mut path = Vec::new();
+            self.item_blocks(id, &mut p.items, &mut path, &style, sheet, seen, depth)?;
+        }
         Ok(Node {
             id: id.to_string(),
             component,
@@ -816,6 +835,57 @@ impl Doc {
             parts,
             children,
         })
+    }
+}
+
+/// 列表项的 children 里能放的组件：块级、不分页、不是列表。
+pub const ITEM_BLOCKS: &[&str] = &[
+    "Text", "Table", "Image", "Code", "Math", "Quote", "Callout", "Divider",
+];
+
+impl Doc {
+    /// 建列表项 children 引用的元素，放进各项的 blocks。`path` 是项的位置（第几项、子列表第几项……），报错用。
+    #[allow(clippy::too_many_arguments)]
+    fn item_blocks<'a>(
+        &'a self,
+        list_id: &str,
+        items: &mut [components::ListItem],
+        path: &mut Vec<usize>,
+        style: &Style,
+        sheet: &Sheet,
+        seen: &mut HashSet<&'a str>,
+        depth: usize,
+    ) -> Result<()> {
+        for (i, it) in items.iter_mut().enumerate() {
+            let components::ListItem::Nested(n) = it else {
+                continue;
+            };
+            path.push(i + 1);
+            let at = path
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<_>>()
+                .join(".");
+            for cid in &n.children {
+                let (key, el) = self.elements.get_key_value(cid.as_str()).ok_or_else(|| {
+                    anyhow::anyhow!("元素 `{list_id}` 第 {at} 项的 children 里写的 `{cid}` 不存在")
+                })?;
+                if !ITEM_BLOCKS.contains(&el.kind.as_str()) {
+                    bail!(
+                        "元素 `{list_id}` 第 {at} 项的 children 里 `{cid}` 是 {}；列表项里只能放 {}（子列表写在 items 里）",
+                        el.kind,
+                        ITEM_BLOCKS.join("、")
+                    );
+                }
+                let b = self
+                    .build(key, style, sheet, seen, depth + 1)
+                    .with_context(|| format!("在 `{list_id}` 第 {at} 项的 children 里"))?;
+                n.blocks.push(b);
+            }
+            self.item_blocks(list_id, &mut n.items, path, style, sheet, seen, depth)?;
+            path.pop();
+        }
+        Ok(())
     }
 }
 
@@ -988,6 +1058,18 @@ fn resolve_lists(
 
 /// 页眉页脚里不能分页、分栏、分节。
 fn check_hf(n: &Node) -> Result<()> {
+    if let Component::List(p) = &n.component {
+        fn items(xs: &[components::ListItem]) -> Result<()> {
+            for it in xs {
+                for b in it.blocks() {
+                    check_hf(b)?;
+                }
+                items(it.children())?;
+            }
+            Ok(())
+        }
+        items(&p.items)?;
+    }
     if let Component::List(p) = &n.component
         && p.continue_from.is_some()
     {

@@ -1643,16 +1643,24 @@ impl Ctx<'_> {
             let runs = common::rebase_runs(l.item.text(), &n.style, &item);
             let para = self.inline(para, runs, &n.id);
             self.blocks.push(Block::P(para));
+            // 这一项的续块：不带编号，左缩进对齐到这一级的文字（编号定义里的 w:ind left）
+            let indent = common::item_text_indent(&l.style, l.level);
+            for b in l.item.blocks() {
+                let b = common::indented_block(b, indent);
+                self.node(&b);
+            }
         }
     }
 
     fn table(&mut self, n: &Node, p: &TableProps) {
         let g = Grid::of(p);
         let s = &n.style;
+        // 左缩进（列表项里的表格对齐到项的文字）：w:tblInd，撑满的表格宽度扣掉它
+        let indent_pt = s.margin_left.map_or(0.0, |x| x.pt(s.size_pt(), 0.0));
         let width_pt = match s.width {
-            Some(Len::Pct(x)) => self.content_width_pt * x / 100.0,
+            Some(Len::Pct(x)) => (self.content_width_pt - indent_pt) * x / 100.0,
             Some(w) => w.abs_pt(),
-            None => self.content_width_pt,
+            None => self.content_width_pt - indent_pt,
         };
         let pad_pt = s
             .cell_padding
@@ -1860,6 +1868,11 @@ impl Ctx<'_> {
                     WidthType::Auto
                 },
             );
+        let t = if indent_pt != 0.0 {
+            t.indent(units::twip(indent_pt))
+        } else {
+            t
+        };
         if s.page_break_before == Some(true) {
             self.page_break();
         }

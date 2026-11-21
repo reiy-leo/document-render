@@ -2,7 +2,7 @@
 //! - catalog 里每个内置组件名、每个组件的每个 prop 名和部位、每个样式字段都要在文档里出现，
 //!   加了组件、prop 或样式字段忘了写文档这里会挂；
 //! - 紧跟在 `<!-- check -->` 注释下一行的 ```json 代码块是完整文档，要能通过 check，
-//!   没有公式警告，而且每个元素都挂在树上（children 或页眉页脚引用到）。
+//!   没有公式警告，而且每个元素都挂在树上（children、页眉页脚或列表项的 children 引用到）。
 
 use std::collections::BTreeSet;
 
@@ -40,7 +40,17 @@ fn checked_blocks() -> Vec<(usize, String)> {
     out
 }
 
-/// 从 root 出发能走到的元素 id，加上页眉页脚引用的。
+/// 列表项对象 `children` 里引用的元素 id（含子列表的项）。
+fn item_children(items: &Value, out: &mut Vec<String>) {
+    for it in items.as_array().into_iter().flatten() {
+        if let Some(ch) = it["children"].as_array() {
+            out.extend(ch.iter().filter_map(|x| x.as_str().map(String::from)));
+        }
+        item_children(&it["items"], out);
+    }
+}
+
+/// 从 root 出发能走到的元素 id，加上页眉页脚、列表项 children 引用的。
 fn reachable(doc: &Value) -> BTreeSet<String> {
     let els = &doc["elements"];
     let mut seen = BTreeSet::new();
@@ -60,6 +70,9 @@ fn reachable(doc: &Value) -> BTreeSet<String> {
         let el = &els[&id];
         if let Some(ch) = el["children"].as_array() {
             stack.extend(ch.iter().filter_map(|x| x.as_str().map(String::from)));
+        }
+        if el["type"] == "List" {
+            item_children(&el["props"]["items"], &mut stack);
         }
         if el["type"] == "Section" {
             hf(&el["props"]["header"], &mut stack);

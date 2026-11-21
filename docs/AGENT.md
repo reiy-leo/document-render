@@ -226,10 +226,41 @@ run 对象的字段见 3.17。
 | prop | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
 | `ordered` | 布尔 | 否 | `false` | 有序带编号 |
-| `items` | 数组 | 是 | — | 每项是 inline，或 `{ "text": inline, "items": [子项], "ordered": 布尔 }` |
+| `items` | 数组 | 是 | — | 每项是 inline，或 `{ "text": inline, "children": [元素 id], "items": [子项], "ordered": 布尔 }` |
 | `continueFrom` | 字符串 | 否 | 无 | 接着前面哪个 List 编号，写它的元素 id |
 
-子项对象只认 `text`、`items`、`ordered`；`ordered` 不写跟上一级一样。同一级里可以有的子列表有序、有的无序，各显示各的，有序的都从 1 起。
+子项对象只认 `text`、`children`、`items`、`ordered`；`ordered` 不写跟上一级一样。同一级里可以有的子列表有序、有的无序，各显示各的，有序的都从 1 起。
+
+**项里放多段、表格、图片、代码（`children`）**：一项里除了第一段文字，还要放第二段、表格、图片、代码时，把这些块照常定义在 `elements` 里，在项对象的 `children` 里按顺序写它们的 id。规则：
+
+- 顺序固定：先 `text`，再 `children` 里的块，最后 `items` 子列表。
+- 能放的只有 `Text`、`Table`、`Image`、`Code`、`Math`、`Quote`、`Callout`、`Divider`；子列表写在 `items` 里，不要放 List。放别的会报错。
+- 和 Document 的 `children` 一样，一个元素只能被引用一次，id 要存在，否则报错。
+- 这些块不带编号，左边和这一项的文字对齐（第二级的项就对齐第二级的文字）；块自己的样式照常写。docx 里是不带编号的段落和表格，缩进对齐到这一级文字；md 里写成列表项的续块。
+
+<!-- check -->
+```json
+{
+  "root": "doc",
+  "elements": {
+    "doc": { "type": "Document", "children": ["steps"] },
+    "steps": {
+      "type": "List",
+      "props": {
+        "ordered": true,
+        "items": [
+          { "text": "下载安装包。", "children": ["more", "cmd"] },
+          { "text": "按下表选版本：", "children": ["tbl"], "items": ["子项照常写在 items 里"] },
+          "完成。"
+        ]
+      }
+    },
+    "more": { "type": "Text", "props": { "text": "第一项的第二段，没有编号，和「下载安装包」对齐。" } },
+    "cmd": { "type": "Code", "props": { "code": "tar xzf document-render.tar.gz", "language": "sh" } },
+    "tbl": { "type": "Table", "props": { "columns": ["系统", "安装包"], "rows": [["macOS", "aarch64-apple-darwin"]] } }
+  }
+}
+```
 
 **接着编号（`continueFrom`）**：两段列表中间隔着正文、表格时，后一段写 `"continueFrom": "前一段的id"`，第一级从前一段最后一项之后接着数（前一段数到 3，这段从 4 起）。只数第一级：子级在新的第一级项下照常从 1 起。可以链着接（C 接 B，B 接 A）。规则：
 
@@ -948,6 +979,8 @@ prop `type`：`string`（默认）`number` `integer` `boolean` `array` `object` 
 | 想调列表项之间的距离，在 List 的 `style` 上写 `spaceBefore` | 只改整个列表前面的距离 | `itemSpacing` |
 | 标题编号手写进文字 `"text": "1.2 术语"` | Word 里增删标题不重排，目录也不联动 | `styles` 里给 `Heading.N` 写 `listMarkerFormat`，文字只写「术语」 |
 | 标题编号写在单个标题的 `style` 上 | 报错 | 写在 `styles` 的 `Heading.N` 上；单个标题不编号写 `"numbered": false` |
+| 列表项第二段写成下一个 `items` 项，或写成列表后面的 Text | 多出一个编号，或缩进回到最左边 | 写进那一项的 `children` |
+| 项的 `children` 里放 List、Heading | 报错 | 子列表写 `items`；标题放到列表外面 |
 | 二级的 `listMarkerFormat` 写成 `"%1."` | 二级每项都显示一级的编号（`%1` 是第一级） | 写 `"%2."` 或 `"%1.%2"` |
 | 长度写 `"2字符"`、`"10 pt"` 以外的怪单位 | 报错 | 单位只认 `pt mm cm in px em line %` |
 | `listStyleType: "roman"` | 报错；而 `"abc"`（≤3 字符）会被当成符号 | `"lower-roman"` |
