@@ -63,7 +63,7 @@ document-render 把一份 JSON 文档渲染成 docx、pdf、html，也能出 Mar
 
 文字类的 props（Heading 的 `text`、Text 的 `text`、List 的每一项、表格的每一格）都能写成纯字符串，也能写成 runs 数组。数组里可以直接写字符串，也可以写对象：`bold`、`italic`、`underline`、`color`、`href` 是简写，`style` 能写全部文字样式；`"type": "InlineCode"` 表示行内代码，`"type": "InlineMath"` 表示行内公式（text 写 LaTeX）。块级公式用 Math 组件，写法见 [STYLE.md](STYLE.md) 第十四节。列表项可以写成 `{ "text": …, "items": [...] }` 带子列表，同一级的子列表可以有的有序、有的无序。被正文隔开的两段列表，后一段写 `continueFrom` 指向前一段，就接着编号；项与项之间的距离用样式字段 `itemSpacing` 调。
 
-`meta.page` 管纸张：`size`（默认 A4，也可以写 `{ "width", "height" }`）、方向 `orientation`（`portrait` 或 `landscape`，能按节横竖混排）、`margin` 和四个单边、`gutter`、`columns`，还有页眉页脚 `header`、`footer`，页码起始 `pageNumberStart` 和页码格式 `pageNumberFormat`（罗马数字、字母、中文数字）。要分节就在 root 下面放 `Section`，每节能单独改这些设置；runs 里写 `{ "field": "page" }` 显示页码。细节见 [STYLE.md](STYLE.md) 第十节。
+`meta.page` 管纸张：`size`（默认 A4，也可以写 `{ "width", "height" }`）、方向 `orientation`（`portrait` 或 `landscape`，不写是纵向，能按节横竖混排；换方向时沿用来的页边距像 Word 一样跟着转）、`margin` 和四个单边、`gutter`、`columns`，还有页眉页脚 `header`、`footer`，页码起始 `pageNumberStart` 和页码格式 `pageNumberFormat`（罗马数字、字母、中文数字）。要分节就在 root 下面放 `Section`，每节能单独改这些设置；runs 里写 `{ "field": "page" }` 显示页码。细节见 [STYLE.md](STYLE.md) 第十节。
 
 样式字段、样式集（`styleSet`、`styleSets`）、部位样式和层叠顺序都在 [STYLE.md](STYLE.md)。字段名跟 CSS 走，取值以 OOXML 为准；某个格式表达不了的样式，渲染时忽略并给一次警告，不报错。
 

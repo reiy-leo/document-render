@@ -18,7 +18,7 @@ use serde_json::{Map, Value, json};
 
 use crate::cascade::builtin;
 use crate::components::Field;
-use crate::doc::PageNumberFormat;
+use crate::doc::{Orientation, PageNumberFormat};
 use crate::style::{self, Len, ListStyleType, Style};
 use word::{
     A, Lvl, M, Numbering, PPr, R, Styles, Theme, V, W, WP, child, child_ns, is, isw, round2, wa,
@@ -3431,13 +3431,30 @@ fn page_changes(
     cur: &Map<String, Value>,
     collapse: bool,
 ) -> Map<String, Value> {
+    let sides = ["marginTop", "marginRight", "marginBottom", "marginLeft"];
+    // 换了方向时，渲染会把沿用来的边距照 Word 的规则先转一下，所以拿转过的上一节来比
+    let orient = |m: &Map<String, Value>| {
+        if m.get("orientation").and_then(Value::as_str) == Some("landscape") {
+            Orientation::Landscape
+        } else {
+            Orientation::Portrait
+        }
+    };
+    let mut prev = prev.clone();
+    let turned = Orientation::rotate_margins(
+        orient(&prev),
+        orient(cur),
+        sides.map(|k| prev.get(k).cloned().unwrap_or(Value::Null)),
+    );
+    for (k, v) in sides.into_iter().zip(turned) {
+        prev.insert(k.into(), v);
+    }
     let mut out = Map::new();
     for (k, v) in cur {
         if !prev.get(k).is_some_and(|p| same(p, v)) {
             out.insert(k.clone(), v.clone());
         }
     }
-    let sides = ["marginTop", "marginRight", "marginBottom", "marginLeft"];
     if collapse
         && sides.iter().all(|k| out.contains_key(*k))
         && sides.iter().all(|k| same(&out[*k], &out["marginTop"]))

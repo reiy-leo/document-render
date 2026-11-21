@@ -348,7 +348,7 @@ run 里写 `image` 就是行内图片，格子、段落、页眉页脚里都能�
 | 字段 | 值 | Word | PPT | Excel | HTML | PDF |
 |---|---|---|---|---|---|---|
 | `size` | `A4` `Letter` …，或 `{ width, height }` | w:pgSz | p:sldSz | pageSetup paperSize | @page size | page width / height |
-| `orientation` | `portrait`（默认）`landscape` | w:pgSz orient，w、h 互换 | — | orientation | @page size 宽高互换 | page width / height 互换 |
+| `orientation` | `portrait`（默认）`landscape` | w:pgSz orient，横向长边做 w:w | — | orientation | @page size 长边做宽 | page width / height 长边做宽 |
 | `margin` / `marginTop` … | 长度 | w:pgMar | — | pageMargins | @page margin | margin |
 | `headerDistance` / `footerDistance` | 长度，默认 0.5in | w:pgMar header / footer | — | pageMargins header / footer | 页眉页脚框离纸边的距离（`--paged`） | 页眉页脚框的内边距 |
 | `gutter` | 长度 | w:pgMar gutter | — | — | — | binding |
@@ -386,21 +386,37 @@ root 下面不写 `Section` 也行，整份文档就是一节，用 `meta.page` 
 
 `orientation` 写 `portrait`（纵向）或 `landscape`（横向），`meta.page` 和每个 `Section` 都能写，没写就沿用上一节。横竖可以混排：前后两节纵向，中间一节横向放宽表格，页眉页脚和页码照常接着走。
 
-规则：
+方向只看 `orientation`：
 
-- 横向时长边做宽、短边做高，纵向反过来。只写 `orientation` 不写 `size`，纸张不变，只是转过来。
-- 一直没写过 `orientation` 时，按 `size` 写的宽高摆，不转。自定义尺寸写成 `{ "width": "297mm", "height": "210mm" }` 就是横的。
-- 页边距按横过来的纸算：`marginTop` 是横向纸的上边，`marginLeft` 是左边，装订线也还在左边。Word 在界面里切方向时会把四边页边距跟着转一圈，我们不转，写什么就是什么，跟 Word 存在 w:pgMar 里的意思一样。
-- `headerDistance`、`footerDistance` 也按横过来的纸量：页眉离横向纸的上边，页脚离下边。
-- 旧写法 `"landscape": true` 还认，等于 `"orientation": "landscape"`（alpha.4 及以前的文档在用）。两个都写又对不上时报错。`orientation` 写别的值也报错。
+- 没写过 `orientation` 就是纵向。`size` 写成什么都一样，自定义尺寸写成 `{ "width": "297mm", "height": "210mm" }`，没写方向也按纵向摆，长边竖放。
+- 横向长边横放，纵向长边竖放。`size` 只管纸多大，不管怎么放。只写 `orientation` 不写 `size`，纸张不变，只是转过来。
+- `orientation` 只认这两个值，写别的报错。以前的 `"landscape": true` 已经去掉，写了按不认识的字段报错，改成 `"orientation": "landscape"`。
+
+页边距和 Word 一致。Word 2024 实测，在页面设置里切方向，四边页边距跟着纸转：纵向换横向，纸顺时针转 90°，原来的左边到了上边。
+
+| 纵向 | 横向 |
+|---|---|
+| 上 10mm | 上 30mm（原来的左） |
+| 下 20mm | 下 40mm（原来的右） |
+| 左 30mm | 左 20mm（原来的下） |
+| 右 40mm | 右 10mm（原来的上） |
+
+横向换回纵向就倒过来转，回到上 10、下 20、左 30、右 40。页眉距、页脚距、装订线不变，装订线还在左边。Word 存进 docx 的 w:pgMar 和页面设置对话框里显示的，都是转过以后这一页实际的上下左右。
+
+所以 JSON 里这样算：
+
+- 一节上写的 `margin`、`marginTop` 这些，就是这一节页面实际的上下左右，和 Word 页面设置对话框里填的一样。横向节写 `marginTop`，就是横向纸的上边。
+- 一节换了方向、页边距没写全，沿用来的边距先照上面的规则转过去，再套本节自己写的。比如 `meta.page` 写上 10 下 20 左 30 右 40，下一节只写 `"orientation": "landscape"`，这一节就是上 30 下 40 左 20 右 10；再下一节写回 `"portrait"`，又是上 10 下 20 左 30 右 40。
+- 方向没变不转。`meta.page` 本身写横向时也不转，写的就是横向页上的值。
+- `headerDistance`、`footerDistance` 不转：页眉离这一页的上边，页脚离下边。`gutter` 不转，一直在左边。
 
 各格式：
 
-- docx：每节的 w:sectPr 各写一个 w:pgSz，横向时 w:w、w:h 互换并写 `w:orient="landscape"`。
-- pdf：每节一条 `set page(width, height)`，宽高已经互换，Typst 从新的一页开始排这一节。
+- docx：每节的 w:sectPr 各写一个 w:pgSz，横向时长边写进 w:w 并写 `w:orient="landscape"`；w:pgMar 写这一节转过以后的上下左右，和 Word 自己存的一样。
+- pdf：每节一条 `set page(width, height)`，宽高按方向摆好，边距是转过以后的，Typst 从新的一页开始排这一节。
 - html：直接打开时，每节按自己的版心宽度排，横向那节更宽，正文限宽取最宽那节；打印时浏览器只用第一节的纸张。加 `--paged` 时每节是一个具名页面（`@page document-render-sN`，节上写 `page: document-render-sN`），横向节的 size 宽高互换；另外给每节的页挂一个打印用的具名页面，Chrome 打印、存 PDF 时每页按所在节的纸张出。
 - md：没有页面概念，忽略方向。
-- parse：读 w:pgSz 的宽高，宽大于高就是横向，没写 w:orient 也算；高大于宽就是纵向，写了 `w:orient="landscape"` 也不算（Word 按宽高排版）。宽高相等时才看 w:orient。`size` 一律写成纵向的尺寸，横向另写 `orientation`。
+- parse：读 w:pgSz 的宽高，宽大于高就是横向，没写 w:orient 也算；高大于宽就是纵向，写了 `w:orient="landscape"` 也不算（Word 按宽高排版）。宽高相等时才看 w:orient。`size` 一律写成纵向的尺寸，横向另写 `orientation`。w:pgMar 照实读成这一节的上下左右；后面的节先把上一节的边距照方向转一下再比，一样的就不写，所以只是切了方向的节读回来只有 `orientation`。
 
 ### 页眉页脚
 

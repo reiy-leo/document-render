@@ -77,6 +77,20 @@ fn pg_sizes(xml: &str) -> Vec<(String, String, String)> {
         .collect()
 }
 
+/// 每个 w:pgMar 的上右下左，缇，按文档顺序。
+fn pg_mars(xml: &str) -> Vec<[i64; 4]> {
+    xml.match_indices("<w:pgMar ")
+        .map(|(i, _)| {
+            let tag = &xml[i..i + xml[i..].find("/>").unwrap()];
+            ["top", "right", "bottom", "left"].map(|a| {
+                let k = format!("w:{a}=\"");
+                let rest = &tag[tag.find(&k).unwrap() + k.len()..];
+                rest[..rest.find('"').unwrap()].parse().unwrap()
+            })
+        })
+        .collect()
+}
+
 /// pdf 每页的 MediaBox 宽高，pt，按页的顺序。
 fn pdf_pages(pdf: &[u8]) -> Vec<(f32, f32)> {
     let s = String::from_utf8_lossy(pdf);
@@ -115,8 +129,15 @@ fn docx_each_section_has_own_pgsz() {
             (A4_W.into(), A4_H.into(), "portrait".into()),
         ]
     );
-    // 横向那一节的页边距是 15mm（850 缇），按横过来的纸写
-    assert!(xml.contains(r#"w:top="850""#), "{xml}");
+    // 页边距：第一节左 30mm、其余 20mm；横向节没写边距，照 Word 转成上 30mm；第三节转回来
+    assert_eq!(
+        pg_mars(&xml),
+        vec![
+            [1134, 1134, 1134, 1701],
+            [1701, 1134, 1134, 1134],
+            [1134, 1134, 1134, 1701],
+        ]
+    );
     // 三节都挂着页眉页脚
     assert_eq!(xml.matches("<w:sectPr><w:headerReference").count(), 3);
 }
@@ -140,7 +161,7 @@ fn html_named_pages_and_section_width() {
     assert!(
         x.contains(".document-render-section[data-section=\"1\"] { page: document-render-s1; break-before: page; }")
     );
-    // 直接打开：横向节按自己的版心限宽（841.89 − 2×15mm），正文限宽取最宽那节
+    // 直接打开：横向节按自己的版心限宽（841.89 − 左右各 20mm），正文限宽取最宽那节
     let num_after = |key: &str| -> f32 {
         let i = x.find(key).unwrap_or_else(|| panic!("没有 {key}")) + key.len();
         let rest = &x[i..];
@@ -148,8 +169,8 @@ fn html_named_pages_and_section_width() {
     };
     let s0 = num_after(".document-render-section[data-section=\"0\"] { max-width: ");
     let s1 = num_after(".document-render-section[data-section=\"1\"] { max-width: ");
-    assert!((s0 - (595.2756 - 2.0 * 56.6929)).abs() < 0.01, "{s0}");
-    assert!((s1 - (841.8898 - 2.0 * 42.5197)).abs() < 0.01, "{s1}");
+    assert!((s0 - (595.2756 - 56.6929 - 85.0394)).abs() < 0.01, "{s0}");
+    assert!((s1 - (841.8898 - 2.0 * 56.6929)).abs() < 0.01, "{s1}");
     let body = num_after("color: #1a1a1a; max-width: ");
     assert!((body - s1).abs() < 0.001, "{body}");
     // 不加 --paged 时没有打印用的具名页面
@@ -206,38 +227,114 @@ fn orientation_is_inherited_and_switched_back() {
 }
 
 #[test]
-fn custom_size_is_turned_by_orientation() {
-    // 自定义尺寸写成横的，又写了 portrait：按纵向摆，长边做高
-    let json = r#"{"meta":{"page":{"size":{"width":"297mm","height":"210mm"},"orientation":"portrait"}},
+fn orientation_only_comes_from_orientation() {
+    // 自定义尺寸写成横的、没写方向：照样是纵向，长边竖放
+    let json = r#"{"meta":{"page":{"size":{"width":"297mm","height":"210mm"}}},
         "root":"d","elements":{"d":{"type":"Document","children":["t"]},"t":{"type":"Text","props":{"text":"一"}}}}"#;
     let s = pg_sizes(&document_xml(&render(json, Format::Docx)));
     assert_eq!(s[0], (A4_W.into(), A4_H.into(), "portrait".into()));
-    // 没写方向：照 size 写的宽高，宽大于高就写成横向
-    let json = json.replace(r#","orientation":"portrait""#, "");
-    let s = pg_sizes(&document_xml(&render(&json, Format::Docx)));
-    assert_eq!(s[0], (A4_H.into(), A4_W.into(), "landscape".into()));
-    // 横向写在 meta.page 上
-    let json = json.replace(
-        r#""size":{"width":"297mm","height":"210mm"}"#,
-        r#""size":"A4","orientation":"landscape""#,
+    let pages = pdf_pages(&render(json, Format::Pdf));
+    assert!((pages[0].0 - 595.28).abs() < 0.1 && (pages[0].1 - 841.89).abs() < 0.1);
+    // 同一个尺寸写 landscape：长边横放
+    let wide = json.replace(
+        r#""height":"210mm"}"#,
+        r#""height":"210mm"},"orientation":"landscape""#,
     );
-    let s = pg_sizes(&document_xml(&render(&json, Format::Docx)));
+    let s = pg_sizes(&document_xml(&render(&wide, Format::Docx)));
+    assert_eq!(s[0], (A4_H.into(), A4_W.into(), "landscape".into()));
+    // 纵向尺寸写 landscape 也是长边横放
+    let a4 = wide.replace(r#"{"width":"297mm","height":"210mm"}"#, r#""A4""#);
+    let s = pg_sizes(&document_xml(&render(&a4, Format::Docx)));
     assert_eq!(s[0], (A4_H.into(), A4_W.into(), "landscape".into()));
 }
 
+/// 第一节（meta.page）上 10 下 20 左 30 右 40mm，后面几节按 props 来。
+fn margins_json(sections: &[&str]) -> String {
+    let ids: String = (0..sections.len()).map(|i| format!(",\"s{i}\"")).collect();
+    let mut els = format!(
+        r#""d":{{"type":"Document","children":["t"{ids}]}},"t":{{"type":"Text","props":{{"text":"一"}}}}"#
+    );
+    for (i, p) in sections.iter().enumerate() {
+        els.push_str(&format!(
+            r#","s{i}":{{"type":"Section","props":{p},"children":["u{i}"]}},"u{i}":{{"type":"Text","props":{{"text":"二"}}}}"#
+        ));
+    }
+    format!(
+        r#"{{"meta":{{"page":{{"size":"A4","margin":"20mm","marginTop":"10mm","marginLeft":"30mm","marginRight":"40mm"}}}},"root":"d","elements":{{{els}}}}}"#
+    )
+}
+
+/// mm 换成缇（和 docx 写的一样取整）
+fn tw(mm: f32) -> i64 {
+    (mm / 25.4 * 1440.0).round() as i64
+}
+
 #[test]
-fn legacy_landscape_flag_still_works() {
-    let xml = document_xml(&render(
-        &section_json(r#"{"landscape":true}"#),
-        Format::Docx,
-    ));
-    assert_eq!(pg_sizes(&xml)[1].2, "landscape");
-    // 写法一致时两个一起写也行
-    let xml = document_xml(&render(
-        &section_json(r#"{"landscape":true,"orientation":"landscape"}"#),
-        Format::Docx,
-    ));
-    assert_eq!(pg_sizes(&xml)[1].2, "landscape");
+fn inherited_margins_turn_like_word() {
+    // Word 2024 实测：纵向 上10 下20 左30 右40 切横向，变成 上30 下40 左20 右10；切回纵向还原
+    let json = margins_json(&[
+        r#"{"orientation":"landscape"}"#,
+        r#"{"orientation":"portrait"}"#,
+        r#"{"size":"A5"}"#,
+    ]);
+    let xml = document_xml(&render(&json, Format::Docx));
+    let p = [tw(10.0), tw(40.0), tw(20.0), tw(30.0)];
+    let l = [tw(30.0), tw(10.0), tw(40.0), tw(20.0)];
+    assert_eq!(pg_mars(&xml), vec![p, l, p, p]);
+    // 横向节接着横向：不再转
+    let json = margins_json(&[r#"{"orientation":"landscape"}"#, r#"{"size":"A3"}"#]);
+    let xml = document_xml(&render(&json, Format::Docx));
+    assert_eq!(pg_mars(&xml), vec![p, l, l]);
+    // meta.page 自己就是横向：写的就是横向页上的边距，不转
+    let json =
+        margins_json(&[]).replace(r#""size":"A4""#, r#""size":"A4","orientation":"landscape""#);
+    let xml = document_xml(&render(&json, Format::Docx));
+    assert_eq!(pg_mars(&xml), vec![p]);
+}
+
+#[test]
+fn explicit_margins_are_the_turned_page() {
+    // 横向节上写的边距就是横向页的上右下左，和 Word 页面设置对话框一致；先转沿用来的，再套写的
+    let json = margins_json(&[r#"{"orientation":"landscape","marginTop":"15mm"}"#]);
+    let xml = document_xml(&render(&json, Format::Docx));
+    assert_eq!(pg_mars(&xml)[1], [tw(15.0), tw(10.0), tw(40.0), tw(20.0)]);
+    let json = margins_json(&[
+        r#"{"orientation":"landscape","margin":"12mm","marginTop":"12mm","marginRight":"12mm","marginBottom":"12mm","marginLeft":"12mm"}"#,
+    ]);
+    let xml = document_xml(&render(&json, Format::Docx));
+    assert_eq!(pg_mars(&xml)[1], [tw(12.0); 4]);
+    // pdf、html 用的是同一组边距：html 横向节限宽 = 841.89 − 左 20mm − 右 10mm
+    let json = margins_json(&[r#"{"orientation":"landscape"}"#]);
+    let x = text(&json, Format::Html);
+    let key = ".document-render-section[data-section=\"1\"] { max-width: ";
+    let i = x.find(key).unwrap() + key.len();
+    let w: f32 = x[i..i + x[i..].find("pt").unwrap()].parse().unwrap();
+    assert!((w - (841.8898 - 56.6929 - 28.3465)).abs() < 0.01, "{w}");
+}
+
+#[test]
+fn header_distance_and_gutter_do_not_turn() {
+    // Word 切方向时页眉距、页脚距、装订线都不变
+    let json = margins_json(&[r#"{"orientation":"landscape"}"#]).replace(
+        r#""marginRight":"40mm""#,
+        r#""marginRight":"40mm","headerDistance":"5mm","footerDistance":"7mm","gutter":"3mm""#,
+    );
+    let xml = document_xml(&render(&json, Format::Docx));
+    let want = format!(r#"w:header="{}" w:footer="{}""#, tw(5.0), tw(7.0));
+    assert_eq!(xml.matches(&want).count(), 2, "{xml}");
+    // 装订线并进左边距写（docx 一直这样写），两节都在左边：纵向 30+3，横向 20+3
+    let m = pg_mars(&xml);
+    assert_eq!((m[0][3], m[1][3]), (tw(33.0), tw(23.0)));
+}
+
+#[test]
+fn legacy_landscape_field_is_unknown() {
+    let e = err(&section_json(r#"{"landscape":true}"#));
+    assert!(e.contains("landscape"), "{e}");
+    let e = err(
+        r#"{"meta":{"page":{"landscape":true}},"root":"d","elements":{"d":{"type":"Document","children":[]}}}"#,
+    );
+    assert!(e.contains("landscape"), "{e}");
 }
 
 #[test]
@@ -249,10 +346,6 @@ fn check_rejects_bad_orientation() {
     );
     let e = err(&section_json(r#"{"orientation":true}"#));
     assert!(e.contains("orientation 只认") && e.contains("true"), "{e}");
-    let e = err(&section_json(
-        r#"{"orientation":"portrait","landscape":true}"#,
-    ));
-    assert!(e.contains("元素 `b`") && e.contains("对不上"), "{e}");
     let e = err(
         r#"{"meta":{"page":{"orientation":"Landscape"}},"root":"d","elements":{"d":{"type":"Document","children":[]}}}"#,
     );
@@ -260,10 +353,6 @@ fn check_rejects_bad_orientation() {
         e.contains("orientation 只认") && e.contains("Landscape"),
         "{e}"
     );
-    let e = err(
-        r#"{"meta":{"page":{"orientation":"landscape","landscape":false}},"root":"d","elements":{"d":{"type":"Document","children":[]}}}"#,
-    );
-    assert!(e.contains("meta.page") && e.contains("对不上"), "{e}");
 }
 
 fn parse(bytes: &[u8]) -> Value {
@@ -301,11 +390,44 @@ fn parse_round_trip_keeps_orientation() {
     assert!(secs[0]["props"].get("size").is_none());
     assert_eq!(secs[1]["props"]["orientation"], "portrait");
     assert!(!back.to_string().contains("\"landscape\":"));
-    // 读回来的 JSON 再出 docx，每节纸张一样
+    // 横向节的边距是第一节转过来的，读回时不用另写
+    for s in &secs {
+        let keys: Vec<&String> = s["props"].as_object().unwrap().keys().collect();
+        assert!(keys.iter().all(|k| !k.starts_with("margin")), "{keys:?}");
+    }
+    // 读回来的 JSON 再出 docx，每节纸张、边距一样
     let again = render(&back.to_string(), Format::Docx);
     assert_eq!(
         pg_sizes(&document_xml(&again)),
         pg_sizes(&document_xml(&docx))
+    );
+    assert_eq!(
+        pg_mars(&document_xml(&again)),
+        pg_mars(&document_xml(&docx))
+    );
+}
+
+#[test]
+fn parse_round_trip_margins() {
+    // 沿用转过来的不写；横向节上另改了的照实写横向页上的值
+    let json = margins_json(&[
+        r#"{"orientation":"landscape"}"#,
+        r#"{"orientation":"portrait"}"#,
+        r#"{"orientation":"landscape","marginTop":"15mm"}"#,
+    ]);
+    let docx = render(&json, Format::Docx);
+    let back = parse(&docx);
+    let secs = sections(&back);
+    let props: Vec<Value> = secs.iter().map(|s| s["props"].clone()).collect();
+    assert_eq!(props[0], serde_json::json!({ "orientation": "landscape" }));
+    assert_eq!(props[1], serde_json::json!({ "orientation": "portrait" }));
+    assert_eq!(props[2]["orientation"], "landscape");
+    assert!(props[2].get("marginTop").is_some(), "{}", props[2]);
+    assert!(props[2].get("marginLeft").is_none(), "{}", props[2]);
+    let again = render(&back.to_string(), Format::Docx);
+    assert_eq!(
+        pg_mars(&document_xml(&again)),
+        pg_mars(&document_xml(&docx))
     );
 }
 

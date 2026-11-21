@@ -332,7 +332,7 @@ run 对象的字段见 3.17。
 | prop | 类型 | 说明 |
 |---|---|---|
 | `size` | `"A3"` `"A4"` `"A5"` `"B5"` `"Letter"` `"Legal"`，或 `{ "width", "height" }` | 纸张 |
-| `orientation` | `"portrait"`（纵向）`"landscape"`（横向） | 方向，横向时纸张宽高互换 |
+| `orientation` | `"portrait"`（纵向）`"landscape"`（横向） | 方向，不写是纵向；横向长边横放 |
 | `margin` | 长度 | 四边页边距 |
 | `marginTop` `marginRight` `marginBottom` `marginLeft` | 长度 | 单边，覆盖 `margin` |
 | `gutter` | 长度 | 装订线 |
@@ -352,27 +352,28 @@ run 对象的字段见 3.17。
 
 方向规则：
 
+- 方向只看 `orientation`，从没写过就是纵向。`size` 写成宽大于高（如 `{ "width": "297mm", "height": "210mm" }`）也还是纵向，长边竖放；要横向必须写 `"orientation": "landscape"`。
 - `orientation` 沿用上一节。中间一节写 `"landscape"`，后面要回到纵向就写 `"portrait"`。
-- 横向时长边做宽、短边做高；只写 `orientation` 不写 `size`，纸张还是上一节的。
-- 页边距和页眉页脚距离按横过来的纸算：`marginTop` 就是横向纸的上边，Word 切方向时会把四边转一下，这里不转。
-- 没写过 `orientation` 时按 `size` 写的宽高摆，自定义尺寸写成宽大于高就是横的。
-- 旧写法 `"landscape": true` 还认，等于 `"orientation": "landscape"`；和 `orientation` 一起写又对不上时报错。
+- 横向长边横放；只写 `orientation` 不写 `size`，纸张还是上一节的。
+- 没有 `landscape` 这个字段，写了报错。
+- 页边距和 Word 一样：节上写的 `margin`、`marginTop` 等是这一节页面实际的上下左右（Word 页面设置里看到的值）。换了方向又没写边距，沿用来的边距像 Word 切方向那样转：纵向 上 10 下 20 左 30 右 40mm，换横向成 上 30 下 40 左 20 右 10（原来的左边到了上边），换回纵向还原。写了的边先转再盖。
+- `headerDistance`、`footerDistance`、`gutter` 换方向不变。
 
-宽表格放横向的例子（前后两节纵向，页眉页脚照常）：
+宽表格放横向的例子（前后两节纵向，页眉页脚照常；左边 30mm 在横向节转到上边，回纵向又转回左边）：
 
 <!-- check -->
 ```json
 {
-  "meta": { "page": { "size": "A4", "header": "hdr" } },
+  "meta": { "page": { "size": "A4", "margin": "20mm", "marginLeft": "30mm", "header": "hdr" } },
   "root": "doc",
   "elements": {
     "doc": { "type": "Document", "children": ["s1", "s2", "s3"] },
     "hdr": { "type": "Text", "props": { "text": "季度报告" } },
     "s1": { "type": "Section", "children": ["p1"] },
     "p1": { "type": "Text", "props": { "text": "前言，纵向。" } },
-    "s2": { "type": "Section", "props": { "orientation": "landscape", "margin": "15mm" }, "children": ["t"] },
+    "s2": { "type": "Section", "props": { "orientation": "landscape" }, "children": ["t"] },
     "t": { "type": "Table", "props": { "columns": ["区域", "Q1", "Q2", "Q3", "Q4", "全年"], "rows": [["华东", "1", "2", "3", "4", "10"]] } },
-    "s3": { "type": "Section", "props": { "orientation": "portrait", "margin": "20mm" }, "children": ["p2"] },
+    "s3": { "type": "Section", "props": { "orientation": "portrait" }, "children": ["p2"] },
     "p2": { "type": "Text", "props": { "text": "回到纵向。" } }
   }
 }
@@ -937,3 +938,6 @@ prop `type`：`string`（默认）`number` `integer` `boolean` `array` `object` 
 | 顶层多写 `title`、`page` | 报错 | 放进 `meta`、`meta.page` |
 | 横向一节后面的节没写 `orientation` | 后面也全是横的（方向沿用） | 要回纵向的那节写 `"orientation": "portrait"` |
 | `orientation` 写成 `"Landscape"`、`"horizontal"`、`true` | 报错 | 只认 `"portrait"` `"landscape"` |
+| 写 `"landscape": true` | 报错（没有这个字段） | `"orientation": "landscape"` |
+| 自定义尺寸写成宽大于高，想要横向 | 还是纵向，长边竖放 | 加 `"orientation": "landscape"` |
+| 横向节想要和纵向一样的上下左右，却没写边距 | 边距照 Word 转了（左边变成上边） | 在横向节上写出要的四边 |

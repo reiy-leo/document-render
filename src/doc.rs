@@ -62,12 +62,9 @@ pub struct Page {
     /// A4、A5、Letter 等，或 { width, height }
     #[serde(default = "default_size")]
     pub size: PageSize,
-    /// 方向：portrait（纵向，默认）或 landscape（横向）。横向时宽高互换
+    /// 方向：portrait（纵向，默认）或 landscape（横向）。只看这个字段，和 size 的宽高无关
     #[serde(default)]
     pub orientation: Option<Orientation>,
-    /// 旧写法，`true` 等于 `orientation: "landscape"`；alpha.4 及以前的文档还在用
-    #[serde(default)]
-    pub landscape: Option<bool>,
     #[serde(default = "default_margin")]
     pub margin: Len,
     #[serde(default)]
@@ -237,7 +234,7 @@ pub enum Orientation {
     /// 纵向
     #[default]
     Portrait,
-    /// 横向：纸张宽高互换
+    /// 横向：长边横放
     Landscape,
 }
 
@@ -262,27 +259,15 @@ impl Orientation {
         }
     }
 
-    /// `orientation` 和旧写法 `landscape` 合起来：两个都写又对不上时报错，`what` 用在报错里。
-    pub fn resolve(
-        o: Option<Orientation>,
-        legacy: Option<bool>,
-        what: &str,
-    ) -> Result<Option<Orientation>> {
-        let l = legacy.map(|b| {
-            if b {
-                Orientation::Landscape
-            } else {
-                Orientation::Portrait
-            }
-        });
-        match (o, l) {
-            (Some(a), Some(b)) if a != b => bail!(
-                "{what}：orientation 写的是 `{}`，landscape 写的是 `{}`，两个对不上（landscape 是旧写法，只写 orientation 就行）",
-                a.word(),
-                legacy.unwrap_or_default()
-            ),
-            (Some(a), _) => Ok(Some(a)),
-            (None, b) => Ok(b),
+    /// 从 `from` 换到 `to` 时，上右下左页边距跟着怎么转（和 Word 页面设置里切方向一样）：
+    /// 纵向换横向，纸顺时针转 90°，原来的左边到了上边：上←左、右←上、下←右、左←下；
+    /// 横向换回纵向反过来。方向没变原样返回。
+    pub fn rotate_margins<T: Clone>(from: Orientation, to: Orientation, m: [T; 4]) -> [T; 4] {
+        let [t, r, b, l] = m;
+        match (from, to) {
+            (Orientation::Portrait, Orientation::Landscape) => [l, t, r, b],
+            (Orientation::Landscape, Orientation::Portrait) => [r, b, l, t],
+            _ => [t, r, b, l],
         }
     }
 }
@@ -453,7 +438,6 @@ impl Default for Page {
         Page {
             size: default_size(),
             orientation: None,
-            landscape: None,
             margin: default_margin(),
             margin_top: None,
             margin_right: None,
@@ -481,31 +465,22 @@ impl Page {
             }),
             PageSize::Custom { width, height } => (width.abs_pt(), height.abs_pt()),
         };
-        // 写了方向就按方向摆：横向长边做宽，纵向长边做高。
-        // 没写方向时按 size 写的宽高，不转（自定义尺寸写成宽大于高就是横的）
+        // 方向只看 orientation：纵向长边竖放，横向长边横放。size 写成宽大于高也一样
         let (short, long) = if w <= h { (w, h) } else { (h, w) };
-        match self.orientation_set() {
-            Some(Orientation::Landscape) => (long, short),
-            Some(Orientation::Portrait) => (short, long),
-            None => (w, h),
+        match self.orientation() {
+            Orientation::Landscape => (long, short),
+            Orientation::Portrait => (short, long),
         }
     }
 
-    /// 写明的方向（`orientation` 优先，再看旧写法 `landscape`），都没写是 None。
-    pub fn orientation_set(&self) -> Option<Orientation> {
-        self.orientation.or(self.landscape.map(|b| {
-            if b {
-                Orientation::Landscape
-            } else {
-                Orientation::Portrait
-            }
-        }))
+    /// 方向，没写是纵向。
+    pub fn orientation(&self) -> Orientation {
+        self.orientation.unwrap_or_default()
     }
 
-    /// 排出来是不是横的（宽大于高）。docx 的 w:orient 按它写。
+    /// 是不是横向。docx 的 w:orient 按它写。
     pub fn is_landscape(&self) -> bool {
-        let (w, h) = self.dims_pt(&mut Vec::new());
-        w > h
+        self.orientation() == Orientation::Landscape
     }
 
     /// 上右下左页边距，pt。
@@ -533,12 +508,28 @@ impl Page {
         macro_rules! set {
             ($($f:ident),*) => { $( if let Some(v) = &o.$f { self.$f = v.clone().into(); } )* };
         }
-        set!(size, margin);
-        // 两个都写且矛盾的情况建树前已经报错，这里只取结果
-        if let Ok(Some(o)) = Orientation::resolve(o.orientation, o.landscape, "") {
-            self.orientation = Some(o);
-            self.landscape = None;
+        // 方向变了，沿用来的页边距先照 Word 切方向的规则转过去，再套本节自己写的边距。
+        // 单边没写（None）的那几边等于 margin，转不转都一样，所以只转单边字段
+        if let Some(to) = o.orientation {
+            let from = self.orientation();
+            [
+                self.margin_top,
+                self.margin_right,
+                self.margin_bottom,
+                self.margin_left,
+            ] = Orientation::rotate_margins(
+                from,
+                to,
+                [
+                    self.margin_top,
+                    self.margin_right,
+                    self.margin_bottom,
+                    self.margin_left,
+                ],
+            );
+            self.orientation = Some(to);
         }
+        set!(size, margin);
         macro_rules! opt {
             ($($f:ident),*) => { $( if o.$f.is_some() { self.$f = o.$f.clone(); } )* };
         }
@@ -702,18 +693,6 @@ impl Doc {
                 );
             }
             out.push(self.implicit_section(root, loose));
-        }
-
-        // 方向：orientation 和旧写法 landscape 不能矛盾
-        Orientation::resolve(
-            self.meta.page.orientation,
-            self.meta.page.landscape,
-            "meta.page",
-        )?;
-        for sec in &out {
-            if let Component::Section(p) = &sec.component {
-                Orientation::resolve(p.orientation, p.landscape, &format!("元素 `{}`", sec.id))?;
-            }
         }
 
         // 逐节叠加纸张和页眉页脚设置

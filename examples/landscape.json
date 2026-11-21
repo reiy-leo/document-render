@@ -8,7 +8,8 @@
       "headerDistance": "12mm",
       "footerDistance": "12mm",
       "header": "hdr",
-      "footer": "ftr"
+      "footer": "ftr",
+      "marginLeft": "30mm"
     }
   },
   "root": "d",
@@ -76,14 +77,13 @@
     "p2": {
       "type": "Text",
       "props": {
-        "text": "横向那一节只写了 orientation，纸张还是 A4，宽高互换；页边距照写的值套在横过来的纸上，上边距就是横向纸的上边。"
+        "text": "第一节左边距 30mm，其余三边 20mm。横向那一节只写了 orientation，纸张还是 A4，长边横放；页边距没写，沿用第一节的，并像 Word 切方向那样跟着纸转：纵向的左边到了横向的上边，所以这一节上边距 30mm，其余 20mm。"
       }
     },
     "s2": {
       "type": "Section",
       "props": {
-        "orientation": "landscape",
-        "margin": "15mm"
+        "orientation": "landscape"
       },
       "children": [
         "h2",
@@ -229,8 +229,7 @@
     "s3": {
       "type": "Section",
       "props": {
-        "orientation": "portrait",
-        "margin": "20mm"
+        "orientation": "portrait"
       },
       "children": [
         "h3",
@@ -247,7 +246,7 @@
     "p4": {
       "type": "Text",
       "props": {
-        "text": "第三节写回 portrait，后面的内容又是纵向 A4。页眉页脚在三节里位置一样：页眉离纸张上边 12mm，页脚离下边 12mm。"
+        "text": "第三节写回 portrait，后面又是纵向 A4，30mm 也转回左边。页眉页脚在三节里位置一样：页眉离纸张上边 12mm，页脚离下边 12mm。"
       }
     }
   }
