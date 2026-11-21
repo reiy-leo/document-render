@@ -677,7 +677,8 @@ impl Html<'_> {
 
     /// 列表：编号自己算好写出来，这样 listMarkerFormat、对齐、间距在各格式一致。
     fn list(&mut self, n: &Node, p: &ListProps, st: &str) {
-        let lines = common::flatten_list(n, &p.items, p.ordered);
+        let lines = common::flatten_list(n, p);
+        let gaps = common::item_gaps(&lines);
         let _ = writeln!(
             self.out,
             "<div class=\"document-render-list\" id=\"{}\"{st}>",
@@ -685,7 +686,7 @@ impl Html<'_> {
         );
         let marker_part = n.part("marker");
         let item_part = n.part("item");
-        for l in &lines {
+        for (i, l) in lines.iter().enumerate() {
             let s = &l.style;
             let fs = s.size_pt();
             let indent = s.list_indent.map(|x| x.pt(fs, 0.0)).unwrap_or(18.0) * l.level as f32;
@@ -697,7 +698,17 @@ impl Html<'_> {
             item.background = None;
             item.border = None;
             item.padding = None;
+            item.item_spacing = None;
             item.merge(&item_part);
+            // itemSpacing：项间距写在下一项的 margin-top 上，上一项的 margin-bottom 归零
+            if i > 0
+                && let Some(g) = gaps[i - 1]
+            {
+                item.space_before = Some(g);
+            }
+            if gaps.get(i).is_some_and(|g| g.is_some()) {
+                item.space_after = Some(Len::Pt(0.0));
+            }
             self.cjk = metrics::has_cjk(&format!("{:?}{}", l.item.text(), l.marker));
             self.marker_font = s
                 .list_marker_font

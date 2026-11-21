@@ -348,3 +348,415 @@ fn numbering_levels_follow_schema_order() {
     assert!(saw_lgl, "二级 decimal 应该有 isLgl：{xml}");
     assert!(xml.contains("<w:suff w:val=\"space\""), "{xml}");
 }
+
+// ---------- continueFrom：两个分开的列表接着编号 ----------
+
+/// 三段列表：B 接 A，C 接 B，中间隔着正文。A 有子列表，接续只数第一级。
+const CHAIN: &str = r##"{
+  "root": "d",
+  "elements": {
+    "d": { "type": "Document", "children": ["a", "t1", "b", "t2", "c"] },
+    "a": { "type": "List", "props": { "ordered": true, "items": [
+      "一", { "text": "二", "items": ["二甲", "二乙"] }, "三"
+    ] } },
+    "t1": { "type": "Text", "props": { "text": "中间一段正文" } },
+    "b": { "type": "List", "props": { "ordered": true, "continueFrom": "a", "items": ["四", "五"] } },
+    "t2": { "type": "Text", "props": { "text": "又一段" } },
+    "c": { "type": "List", "props": { "ordered": true, "continueFrom": "b", "items": ["六"] } }
+  }
+}"##;
+
+/// document.xml 里每个列表段落的 (numId, ilvl)。
+fn para_nums(docx: &[u8]) -> Vec<(String, String)> {
+    let xml = unzip(docx, "word/document.xml");
+    xml.split("<w:numPr>")
+        .skip(1)
+        .map(|c| {
+            let get = |tag: &str| {
+                let at = c.find(&format!("<w:{tag} w:val=\"")).unwrap();
+                let r = &c[at + tag.len() + 11..];
+                r[..r.find('"').unwrap()].to_string()
+            };
+            (get("numId"), get("ilvl"))
+        })
+        .collect()
+}
+
+/// numbering.xml 里 numId 为 `id` 的 w:num。
+fn num_xml(docx: &[u8], id: &str) -> String {
+    let xml = unzip(docx, "word/numbering.xml");
+    let at = xml
+        .find(&format!("<w:num w:numId=\"{id}\""))
+        .unwrap_or_else(|| panic!("没有 num {id}：{xml}"));
+    let r = &xml[at..];
+    r[..r.find("</w:num>").unwrap()].to_string()
+}
+
+#[test]
+fn continue_from_numbers_in_every_format() {
+    let h = html(CHAIN);
+    assert_eq!(
+        html_markers(&h),
+        ["1.", "2.", "a.", "b.", "3.", "4.", "5.", "6."],
+        "{h}"
+    );
+    let src = typst(CHAIN);
+    let pdf: Vec<&str> = src
+        .lines()
+        .filter(|l| l.contains("let m = ["))
+        .map(|l| {
+            let at = l.find("#\"").unwrap() + 2;
+            &l[at..at + l[at..].find('"').unwrap()]
+        })
+        .collect();
+    assert_eq!(pdf, ["1.", "2.", "a.", "b.", "3.", "4.", "5.", "6."]);
+    let md = markdown(CHAIN);
+    assert!(
+        md.contains("4. 四") && md.contains("5. 五") && md.contains("6. 六"),
+        "{md}"
+    );
+    // docx：三段列表的第一级共用一个 num，Word 里真正接着数
+    let d = render(CHAIN, Format::Docx);
+    let nums = para_nums(&d);
+    assert_eq!(nums.len(), 8);
+    let top: Vec<&String> = nums
+        .iter()
+        .filter(|(_, l)| l == "0")
+        .map(|(n, _)| n)
+        .collect();
+    assert!(top.iter().all(|n| *n == top[0]), "{nums:?}");
+    assert!(!num_xml(&d, top[0]).contains("startOverride"));
+}
+
+#[test]
+fn continue_from_after_list_start() {
+    let json = CHAIN.replace(
+        r#""a": { "type": "List", "props""#,
+        r#""a": { "type": "List", "style": { "listStart": 3 }, "props""#,
+    );
+    assert_eq!(
+        html_markers(&html(&json)),
+        ["3.", "4.", "a.", "b.", "5.", "6.", "7.", "8."]
+    );
+    assert!(markdown(&json).contains("8. 六"));
+}
+
+/// 第一级定义不同（B 用大写罗马数字）：docx 单开一个 abstractNum，w:start 写算好的号。
+#[test]
+fn continue_from_with_other_format() {
+    let json = CHAIN.replace(
+        r#""continueFrom": "a", "items": ["四", "五"] } },"#,
+        r#""continueFrom": "a", "items": ["四", "五"] }, "style": { "listStyleType": "upper-roman" } },"#,
+    );
+    assert_eq!(
+        html_markers(&html(&json)),
+        ["1.", "2.", "a.", "b.", "3.", "IV.", "V.", "6."]
+    );
+    let d = render(&json, Format::Docx);
+    let nums = para_nums(&d);
+    let xml = unzip(&d, "word/numbering.xml");
+    assert_ne!(nums[0].0, nums[5].0, "{nums:?}");
+    assert!(xml.contains("<w:start w:val=\"4\" />"), "{xml}");
+    assert!(xml.contains("upperRoman"));
+    // C 接的是 B，B 的定义和 C 不同，C 也单开，从 6 起
+    assert!(xml.contains("<w:start w:val=\"6\" />"), "{xml}");
+}
+
+fn check_err(json: &str) -> String {
+    let d = document_render::doc::parse(json).unwrap();
+    format!("{:#}", d.tree().expect_err("应该报错"))
+}
+
+#[test]
+fn continue_from_errors() {
+    let missing = CHAIN.replace(r#""continueFrom": "a""#, r#""continueFrom": "nope""#);
+    assert!(check_err(&missing).contains("`nope` 不存在"));
+    let not_list = CHAIN.replace(r#""continueFrom": "a""#, r#""continueFrom": "t1""#);
+    let e = check_err(&not_list);
+    assert!(e.contains("要写一个 List") && e.contains("Text"), "{e}");
+    let later = CHAIN.replace(r#""continueFrom": "a""#, r#""continueFrom": "c""#);
+    assert!(check_err(&later).contains("出现在它前面"));
+    let selfref = CHAIN.replace(r#""continueFrom": "a""#, r#""continueFrom": "b""#);
+    assert!(check_err(&selfref).contains("出现在它前面"));
+    let both = CHAIN.replace(
+        r#""continueFrom": "a", "items": ["四", "五"] } },"#,
+        r#""continueFrom": "a", "items": ["四", "五"] }, "style": { "listStart": 9 } },"#,
+    );
+    let e = check_err(&both);
+    assert!(e.contains("continueFrom 和 listStart"), "{e}");
+}
+
+// ---------- 同一级里有序、无序混用 ----------
+
+const MIXED: &str = r##"{
+  "root": "d",
+  "elements": {
+    "d": { "type": "Document", "children": ["l"] },
+    "l": { "type": "List", "props": { "ordered": true, "items": [
+      { "text": "一", "items": ["甲", "乙"] },
+      { "text": "二", "ordered": false, "items": ["点", "点"] },
+      { "text": "三", "items": ["丙", "丁", "戊"] },
+      "四"
+    ] } }
+  }
+}"##;
+
+#[test]
+fn mixed_sublists_in_every_format() {
+    let want = [
+        "1.", "a.", "b.", "2.", "◦", "◦", "3.", "a.", "b.", "c.", "4.",
+    ];
+    assert_eq!(html_markers(&html(MIXED)), want);
+    let src = typst(MIXED);
+    let n = src.lines().filter(|l| l.contains("let m = [")).count();
+    assert_eq!(n, want.len());
+    assert!(src.contains("#\"◦\""));
+    let md = markdown(MIXED);
+    assert!(
+        md.contains("2. 二") && md.contains("- 点") && md.contains("1. 丙"),
+        "{md}"
+    );
+}
+
+#[test]
+fn mixed_sublists_docx_numbering() {
+    let d = render(MIXED, Format::Docx);
+    let nums = para_nums(&d);
+    assert_eq!(nums.len(), 11);
+    // 第一级四项同一个 num，父级编号连续
+    let main = &nums[0].0;
+    for i in [0, 3, 6, 10] {
+        assert_eq!(&nums[i].0, main, "{nums:?}");
+        assert_eq!(nums[i].1, "0");
+    }
+    // 第一串、第三串子列表和定义一样，用主 num（Word 在新的第一级项下自己从头数）
+    for i in [1, 2, 7, 8, 9] {
+        assert_eq!(&nums[i].0, main, "{nums:?}");
+    }
+    // 第二串单开一个 num：lvlOverride 换成符号，startOverride 在 lvl 前
+    let other = &nums[4].0;
+    assert_ne!(other, main);
+    assert_eq!(&nums[5].0, other);
+    let x = num_xml(&d, other);
+    let abs_main = {
+        let m = num_xml(&d, main);
+        let at = m.find("w:abstractNumId w:val=\"").unwrap() + 23;
+        m[at..at + m[at..].find('"').unwrap()].to_string()
+    };
+    assert!(
+        x.contains(&format!("<w:abstractNumId w:val=\"{abs_main}\" />")),
+        "{x}"
+    );
+    assert!(x.contains("<w:lvlOverride w:ilvl=\"1\">"), "{x}");
+    let so = x.find("<w:startOverride w:val=\"1\" />").expect(&x);
+    let lv = x.find("<w:lvl w:ilvl=\"1\"").expect(&x);
+    assert!(so < lv, "{x}");
+    assert!(x.contains("<w:numFmt w:val=\"bullet\" />"));
+    assert!(x.contains("<w:lvlText w:val=\"◦\" />"));
+    // 主定义第二级是 lowerLetter、%2.
+    let lv = word_levels(MIXED);
+    assert_eq!(lv[1], ("lowerLetter".into(), "%2.".into()));
+}
+
+/// 第一串子列表是符号，后面的有序子列表单开 num，也从 1（a.）起。
+#[test]
+fn mixed_sublists_bullet_first() {
+    let json = r##"{
+      "root": "d",
+      "elements": {
+        "d": { "type": "Document", "children": ["l"] },
+        "l": { "type": "List", "props": { "ordered": true, "items": [
+          { "text": "一", "ordered": false, "items": ["点"] },
+          { "text": "二", "items": ["甲", "乙"] },
+          { "text": "三", "items": ["丙"] }
+        ] } }
+      }
+    }"##;
+    assert_eq!(
+        html_markers(&html(json)),
+        ["1.", "◦", "2.", "a.", "b.", "3.", "a."]
+    );
+    let d = render(json, Format::Docx);
+    let nums = para_nums(&d);
+    assert_ne!(nums[3].0, nums[0].0);
+    assert_ne!(
+        nums[6].0, nums[3].0,
+        "每串不同定义的子列表各开一个 num，各自从头数"
+    );
+    let x = num_xml(&d, &nums[3].0);
+    assert!(x.contains("lowerLetter") && x.contains("<w:startOverride w:val=\"1\" />"));
+}
+
+// ---------- itemSpacing ----------
+
+const SPACED: &str = r##"{
+  "root": "d",
+  "elements": {
+    "d": { "type": "Document", "children": ["l"] },
+    "l": {
+      "type": "List",
+      "props": { "ordered": true, "items": ["一", { "text": "二", "items": ["甲", "乙"] }, "三"] },
+      "style": { "itemSpacing": 6, "spaceBefore": 10, "spaceAfter": 12 },
+      "parts": { "level2": { "itemSpacing": 2 } }
+    }
+  }
+}"##;
+
+/// document.xml 里每个列表段落的 (before, after)，缇。
+fn para_spacing(docx: &[u8]) -> Vec<(u32, u32)> {
+    let xml = unzip(docx, "word/document.xml");
+    let mut paras = Vec::new();
+    let mut rest = xml.as_str();
+    while let Some(at) = rest.find("<w:p>").or_else(|| rest.find("<w:p ")) {
+        let at = [rest.find("<w:p>"), rest.find("<w:p ")]
+            .into_iter()
+            .flatten()
+            .min()
+            .unwrap_or(at);
+        let end = at + rest[at..].find("</w:p>").unwrap();
+        paras.push(&rest[at..end]);
+        rest = &rest[end..];
+    }
+    paras
+        .into_iter()
+        .filter(|c| c.contains("<w:numPr>"))
+        .map(|c| {
+            let sp = &c[c.find("<w:spacing").unwrap()..];
+            let sp = &sp[..sp.find("/>").unwrap()];
+            let get = |a: &str| {
+                sp.find(&format!("w:{a}=\""))
+                    .map(|at| {
+                        let r = &sp[at + a.len() + 4..];
+                        r[..r.find('"').unwrap()].parse().unwrap()
+                    })
+                    .unwrap_or(0)
+            };
+            (get("before"), get("after"))
+        })
+        .collect()
+}
+
+#[test]
+fn item_spacing_docx() {
+    let sp = para_spacing(&render(SPACED, Format::Docx));
+    // 一→二 6pt；二→甲、甲→乙、乙→三按第二级 2pt；整体段前 10、段后 12
+    assert_eq!(sp, [(200, 0), (120, 0), (40, 0), (40, 0), (40, 240)]);
+}
+
+#[test]
+fn item_spacing_html_and_pdf() {
+    let h = html(SPACED);
+    let items: Vec<&str> = h
+        .split("<div style=\"")
+        .skip(1)
+        .filter(|c| c.contains("document-render-marker"))
+        .map(|c| &c[..c.find('"').unwrap()])
+        .collect();
+    assert_eq!(items.len(), 5);
+    assert!(!items[0].contains("margin-top"), "{}", items[0]);
+    assert!(items[1].contains("margin-top:6pt"), "{}", items[1]);
+    for x in &items[2..] {
+        assert!(x.contains("margin-top:2pt"), "{x}");
+    }
+    for x in &items[..4] {
+        assert!(x.contains("margin-bottom:0pt"), "{x}");
+    }
+    let src = typst(SPACED);
+    assert_eq!(src.matches("above: 6pt").count(), 1, "{src}");
+    assert_eq!(src.matches("above: 2pt").count(), 3, "{src}");
+    // markdown 没有间距，照常出
+    assert!(markdown(SPACED).contains("1. 一"));
+}
+
+// ---------- parse 读回 ----------
+
+fn reparse(json: &str) -> serde_json::Value {
+    let bytes = render(json, Format::Docx);
+    document_render::parse::docx(
+        &bytes,
+        &document_render::parse::Options {
+            assets_dir: "x.assets".into(),
+        },
+    )
+    .unwrap()
+    .json
+}
+
+/// 按文档顺序的 List 元素。
+fn lists_in_order(doc: &serde_json::Value) -> Vec<(String, serde_json::Value)> {
+    let els = &doc["elements"];
+    let mut out = Vec::new();
+    let mut stack = vec![doc["root"].as_str().unwrap().to_string()];
+    while let Some(id) = stack.pop() {
+        let e = &els[&id];
+        if e["type"] == "List" {
+            out.push((id.clone(), e.clone()));
+        }
+        if let Some(ch) = e["children"].as_array() {
+            for c in ch.iter().rev() {
+                stack.push(c.as_str().unwrap().to_string());
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn parse_reads_continue_from() {
+    let doc = reparse(CHAIN);
+    let ls = lists_in_order(&doc);
+    assert_eq!(ls.len(), 3, "{doc}");
+    assert!(ls[0].1["props"]["continueFrom"].is_null());
+    assert_eq!(ls[1].1["props"]["continueFrom"], ls[0].0.as_str());
+    assert_eq!(ls[2].1["props"]["continueFrom"], ls[1].0.as_str());
+    let again = serde_json::to_string(&doc).unwrap();
+    assert_eq!(html_markers(&html(&again)), html_markers(&html(CHAIN)));
+    assert_eq!(
+        para_nums(&render(&again, Format::Docx)),
+        para_nums(&render(CHAIN, Format::Docx))
+    );
+}
+
+#[test]
+fn parse_reads_mixed_sublists() {
+    let doc = reparse(MIXED);
+    let ls = lists_in_order(&doc);
+    assert_eq!(ls.len(), 1, "{doc}");
+    let items = &ls[0].1["props"]["items"];
+    assert_eq!(items[1]["ordered"], false, "{items}");
+    assert!(items[0]["ordered"].is_null() && items[2]["ordered"].is_null());
+    assert!(ls[0].1["parts"]["level2"]["listStyleType"].is_null());
+    let again = serde_json::to_string(&doc).unwrap();
+    assert_eq!(html_markers(&html(&again)), html_markers(&html(MIXED)));
+}
+
+#[test]
+fn parse_reads_item_spacing() {
+    let doc = reparse(SPACED);
+    let ls = lists_in_order(&doc);
+    let l = &ls[0].1;
+    assert_eq!(l["style"]["itemSpacing"], 6.0, "{l}");
+    assert_eq!(l["parts"]["level2"]["itemSpacing"], 2.0, "{l}");
+    assert!(l["parts"]["item"].is_null(), "{l}");
+    let again = serde_json::to_string(&doc).unwrap();
+    assert_eq!(
+        para_spacing(&render(&again, Format::Docx)),
+        para_spacing(&render(SPACED, Format::Docx))
+    );
+}
+
+/// examples/lists.json（也是 Windows Word 对照用的样例）：四种格式都能出，编号对。
+#[test]
+fn lists_example() {
+    let json = include_str!("../examples/lists.json");
+    let want = [
+        "1.", "2.", "a.", "b.", "3.", "4.", "5.", "6.", // 接着编号
+        "1.", "a.", "b.", "2.", "◦", "◦", "3.", "a.", "b.", "c.", "4.", // 同级混用
+        "1.", "◦", "2.", "2.a", "2.b", "3.", "3.a", // 子级模板带上级编号
+        "1.", "2.", "a.", "b.", "3.", "4.", // 项间距
+    ];
+    assert_eq!(html_markers(&html(json)), want);
+    assert!(!render(json, Format::Pdf).is_empty());
+    assert!(!render(json, Format::Docx).is_empty());
+    assert!(markdown(json).contains("6. C 应为 6"));
+}

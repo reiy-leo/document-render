@@ -986,13 +986,43 @@ pub struct Lvl {
     pub font: Option<String>,
 }
 
+pub type NumDef = (i64, HashMap<usize, u32>, HashMap<usize, Lvl>);
+
 #[derive(Debug, Default)]
 pub struct Numbering {
-    /// numId → (abstractNumId, 各级的起始编号覆盖)
-    pub nums: HashMap<i64, (i64, HashMap<usize, u32>)>,
+    /// numId → (abstractNumId, 各级的起始编号覆盖, 各级整级换掉的定义)
+    pub nums: HashMap<i64, NumDef>,
     pub abs: HashMap<i64, Vec<Lvl>>,
     /// abstractNum 的 numStyleLink → 样式名
     links: HashMap<i64, String>,
+}
+
+/// 读一个 w:lvl：返回 (ilvl, 定义)。
+fn parse_lvl(l: Node, theme: &Theme, warns: &mut Warns) -> Option<(usize, Lvl)> {
+    let i = num(wa(l, "ilvl")).map(|x| x as usize).filter(|x| *x < 9)?;
+    let mut v = Lvl {
+        start: child(l, "start")
+            .and_then(|x| num(wval(x)))
+            .map(|x| x as u32),
+        fmt: child(l, "numFmt")
+            .and_then(wval)
+            .unwrap_or("decimal")
+            .to_string(),
+        text: child(l, "lvlText").and_then(wval).unwrap_or("").to_string(),
+        jc: child(l, "lvlJc").and_then(wval).map(str::to_string),
+        suff: child(l, "suff").and_then(wval).map(str::to_string),
+        ..Lvl::default()
+    };
+    if let Some(ind) = child(l, "pPr").and_then(|p| child(p, "ind")) {
+        v.ind = Ind::parse(ind);
+    }
+    if let Some(r) = child(l, "rPr") {
+        v.font = child(r, "rFonts")
+            .and_then(|f| wa(f, "ascii").or_else(|| wa(f, "hAnsi")))
+            .map(str::to_string);
+        v.rpr = rpr(r, theme, warns);
+    }
+    Some((i, v))
 }
 
 impl Numbering {
@@ -1013,32 +1043,9 @@ impl Numbering {
             }
             let mut lvls = vec![Lvl::default(); 9];
             for l in a.children().filter(|c| isw(*c, "lvl")) {
-                let Some(i) = num(wa(l, "ilvl")).map(|x| x as usize).filter(|x| *x < 9) else {
-                    continue;
-                };
-                let mut v = Lvl {
-                    start: child(l, "start")
-                        .and_then(|x| num(wval(x)))
-                        .map(|x| x as u32),
-                    fmt: child(l, "numFmt")
-                        .and_then(wval)
-                        .unwrap_or("decimal")
-                        .to_string(),
-                    text: child(l, "lvlText").and_then(wval).unwrap_or("").to_string(),
-                    jc: child(l, "lvlJc").and_then(wval).map(str::to_string),
-                    suff: child(l, "suff").and_then(wval).map(str::to_string),
-                    ..Lvl::default()
-                };
-                if let Some(ind) = child(l, "pPr").and_then(|p| child(p, "ind")) {
-                    v.ind = Ind::parse(ind);
+                if let Some((i, v)) = parse_lvl(l, theme, warns) {
+                    lvls[i] = v;
                 }
-                if let Some(r) = child(l, "rPr") {
-                    v.font = child(r, "rFonts")
-                        .and_then(|f| wa(f, "ascii").or_else(|| wa(f, "hAnsi")))
-                        .map(str::to_string);
-                    v.rpr = rpr(r, theme, warns);
-                }
-                lvls[i] = v;
             }
             nb.abs.insert(id, lvls);
         }
@@ -1050,29 +1057,35 @@ impl Numbering {
                 continue;
             };
             let mut ov = HashMap::new();
+            let mut lv_ov = HashMap::new();
             for o in n.children().filter(|c| isw(*c, "lvlOverride")) {
-                if let (Some(l), Some(s)) = (
-                    num(wa(o, "ilvl")),
-                    child(o, "startOverride").and_then(|x| num(wval(x))),
-                ) {
-                    ov.insert(l as usize, s as u32);
+                let Some(l) = num(wa(o, "ilvl")).map(|x| x as usize).filter(|x| *x < 9) else {
+                    continue;
+                };
+                if let Some(s) = child(o, "startOverride").and_then(|x| num(wval(x))) {
+                    ov.insert(l, s as u32);
                 }
-                if child(o, "lvl").is_some() {
-                    warns.once(
-                        "lvlOverride",
-                        "编号里有 lvlOverride 改写整级定义，没解析，按原定义处理".into(),
-                    );
+                // lvlOverride 里整级换掉的定义（document-render 给同一级里类型不同的子列表这么写）
+                if let Some((_, v)) = child(o, "lvl").and_then(|x| parse_lvl(x, theme, warns)) {
+                    lv_ov.insert(l, v);
                 }
             }
-            nb.nums.insert(id as i64, (abs as i64, ov));
+            nb.nums.insert(id as i64, (abs as i64, ov, lv_ov));
         }
         nb
+    }
+
+    /// 这个 num 在这一级有没有 startOverride（有的话 Word 从头数，不接着同一个 abstractNum 的编号）。
+    pub fn restarts(&self, num_id: i64, ilvl: usize) -> bool {
+        self.nums
+            .get(&num_id)
+            .is_some_and(|(_, ov, _)| ov.contains_key(&ilvl))
     }
 
     /// numId 指向的 abstractNum 和各级定义（已套上起始编号覆盖）。
     /// numStyleLink 要靠样式表找到真正的定义。
     pub fn levels(&self, num_id: i64, styles: &Styles) -> Option<(i64, Vec<Lvl>)> {
-        let (mut abs, ov) = self.nums.get(&num_id)?.clone();
+        let (mut abs, ov, lv_ov) = self.nums.get(&num_id)?.clone();
         for _ in 0..4 {
             let Some(link) = self.links.get(&abs) else {
                 break;
@@ -1090,6 +1103,11 @@ impl Numbering {
             }
         }
         let mut lv = self.abs.get(&abs)?.clone();
+        for (i, l) in lv_ov {
+            if let Some(x) = lv.get_mut(i) {
+                *x = l;
+            }
+        }
         for (i, s) in ov {
             if let Some(l) = lv.get_mut(i) {
                 l.start = Some(s);

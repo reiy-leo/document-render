@@ -1,7 +1,7 @@
 //! 文档模型：沿用 json-render 的扁平 elements + root。
 
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     path::Path,
 };
 
@@ -549,6 +549,8 @@ impl Doc {
         let mut seen = HashSet::new();
         let mut node = self.build(&self.root, sheet.root_style(), sheet, &mut seen, 0)?;
         self.sections(&mut node, sheet, &mut seen)?;
+        let mut done = HashMap::new();
+        resolve_lists(&mut node, &self.elements, &mut done)?;
         let unused: Vec<_> = self
             .elements
             .keys()
@@ -796,8 +798,63 @@ impl Doc {
     }
 }
 
+/// 按文档顺序给 `continueFrom` 的列表算好第一级起始号。
+/// `done` 记着已经走过的列表：id → 它之后接着数的下一个第一级编号。
+fn resolve_lists(
+    n: &mut Node,
+    elements: &BTreeMap<String, Element>,
+    done: &mut HashMap<String, u32>,
+) -> Result<()> {
+    if let Component::List(p) = &n.component {
+        let mut start_at = None;
+        if let Some(from) = &p.continue_from {
+            let Some(next) = done.get(from) else {
+                match elements.get(from) {
+                    None => bail!("元素 `{}`：continueFrom 写的 `{from}` 不存在", n.id),
+                    Some(e) if e.kind != "List" => bail!(
+                        "元素 `{}`：continueFrom 要写一个 List 的 id，`{from}` 是 {}",
+                        n.id,
+                        e.kind
+                    ),
+                    Some(_) => bail!(
+                        "元素 `{}`：continueFrom 写的 `{from}` 要在文档里出现在它前面",
+                        n.id
+                    ),
+                }
+            };
+            if crate::render::common::list_level_style(n, 1, p.ordered)
+                .list_start
+                .is_some()
+            {
+                bail!(
+                    "元素 `{}`：continueFrom 和 listStart 不能一起写（接着数时起始号由前一个列表算出）",
+                    n.id
+                );
+            }
+            start_at = Some(*next);
+        }
+        if let Component::List(p) = &mut n.component {
+            p.start_at = start_at;
+        }
+        let Component::List(p) = &n.component else {
+            unreachable!()
+        };
+        let first = crate::render::common::list_first_start(n, p);
+        done.insert(n.id.clone(), first + p.items.len() as u32);
+    }
+    for c in &mut n.children {
+        resolve_lists(c, elements, done)?;
+    }
+    Ok(())
+}
+
 /// 页眉页脚里不能分页、分栏、分节。
 fn check_hf(n: &Node) -> Result<()> {
+    if let Component::List(p) = &n.component
+        && p.continue_from.is_some()
+    {
+        bail!("元素 `{}`：页眉页脚里的列表不能用 continueFrom", n.id);
+    }
     match n.component {
         Component::PageBreak(_)
         | Component::ColumnBreak(_)

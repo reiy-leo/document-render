@@ -250,8 +250,10 @@ fn nested_lists_keep_levels_and_kinds() {
     let items = l["props"]["items"].as_array().unwrap();
     assert_eq!(items.len(), 3);
     assert_eq!(items[1]["items"][1]["items"][0], "深");
-    // 同一级在 Word 里只有一种编号定义，第三项的子列表跟着第二项的走（渲染器的限制），这里不查
+    // 第三项的子列表在 docx 里单开 num（lvlOverride 换成符号），读回来是无序的
+    assert_eq!(items[2]["ordered"], false, "{l}");
     assert_eq!(l["parts"]["level2"]["listMarkerFormat"], "(%2)");
+    assert!(l["parts"]["level2"]["listStyleType"].is_null(), "{l}");
 }
 
 #[test]

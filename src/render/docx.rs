@@ -8,12 +8,13 @@ use std::str::FromStr;
 use docx_rs::{
     AbstractNumbering, AlignmentType, BorderType, BreakType, Docx, DrawingPosition, FieldCharType,
     Footer, Header, HeightRule, Hyperlink, HyperlinkType, IndentLevel, InstrNUMPAGES, InstrPAGE,
-    InstrText, Level, LevelJc, LevelSuffixType, LevelText, LineSpacing, LineSpacingType,
-    NumberFormat, Numbering, NumberingId, PageMargin, PageNumType, PageOrientationType, Paragraph,
-    ParagraphBorder, ParagraphBorderPosition, ParagraphBorders, Pic, PicAlign, RelativeFromHType,
-    RelativeFromVType, Run, RunFonts, Shading, ShdType, SpecialIndentType, Start, Style, StyleType,
-    Table, TableCell, TableCellBorder, TableCellBorderPosition, TableCellBorders, TableCellMargins,
-    TableLayoutType, TableRow, TextDirectionType, VAlignType, VMergeType, VertAlignType, WidthType,
+    InstrText, Level, LevelJc, LevelOverride, LevelSuffixType, LevelText, LineSpacing,
+    LineSpacingType, NumberFormat, Numbering, NumberingId, PageMargin, PageNumType,
+    PageOrientationType, Paragraph, ParagraphBorder, ParagraphBorderPosition, ParagraphBorders,
+    Pic, PicAlign, RelativeFromHType, RelativeFromVType, Run, RunFonts, Shading, ShdType,
+    SpecialIndentType, Start, Style, StyleType, Table, TableCell, TableCellBorder,
+    TableCellBorderPosition, TableCellBorders, TableCellMargins, TableLayoutType, TableRow,
+    TextDirectionType, VAlignType, VMergeType, VertAlignType, WidthType,
 };
 
 use crate::{
@@ -98,8 +99,12 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> anyhow::Result<Output> 
         content_width_pt: 0.0,
         // docx-rs 自带一个 id 为 1 的默认编号，从 2 开始免得撞上
         next_num: 2,
+        next_abs: 2,
         blocks: Vec::new(),
-        numberings: Vec::new(),
+        abstracts: Vec::new(),
+        nums: Vec::new(),
+        abs_keys: BTreeMap::new(),
+        list_nums: BTreeMap::new(),
         repeat_heads: Vec::new(),
         ind_chars: Vec::new(),
         sections: Vec::new(),
@@ -217,8 +222,11 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> anyhow::Result<Output> 
     if even_odd {
         docx.settings = docx.settings.even_and_odd_headers();
     }
-    for (abs, num) in std::mem::take(&mut r.numberings) {
-        docx = docx.add_abstract_numbering(abs).add_numbering(num);
+    for abs in std::mem::take(&mut r.abstracts) {
+        docx = docx.add_abstract_numbering(abs);
+    }
+    for num in std::mem::take(&mut r.nums) {
+        docx = docx.add_numbering(num);
     }
     let mut xml = docx.build();
     xml.numberings = fix_numbering(&xml.numberings);
@@ -931,8 +939,14 @@ struct Ctx<'a> {
     opts: &'a Options,
     content_width_pt: f32,
     next_num: usize,
+    next_abs: usize,
     blocks: Vec<Block>,
-    numberings: Vec<(AbstractNumbering, Numbering)>,
+    abstracts: Vec<AbstractNumbering>,
+    nums: Vec<Numbering>,
+    /// 每个 abstractNum 各级定义的键（见 level_key），判断子列表要不要单开 num
+    abs_keys: BTreeMap<usize, [Option<String>; 9]>,
+    /// 已经写过的列表：id → (num, abstractNum)，continueFrom 用
+    list_nums: BTreeMap<String, (usize, usize)>,
     /// 按出现顺序，每张表的表头要不要跨页重复
     repeat_heads: Vec<bool>,
     /// 按字符计的缩进（em），docx-rs 写不出来，生成 XML 后补上（fix_ind_chars）
@@ -1216,101 +1230,181 @@ impl Ctx<'_> {
         self.blocks.push(Block::P(para));
     }
 
-    fn list(&mut self, n: &Node, p: &ListProps) {
-        let lines = common::flatten_list(n, &p.items, p.ordered);
-        let id = self.next_num;
-        self.next_num += 1;
-        // 每一级的定义取这一级第一次出现时的样式
-        let mut abs = AbstractNumbering::new(id);
-        let mut done = [false; 9];
+    /// 一级编号的 w:lvl：类型、模板、缩进、编号的字体字号颜色都从这一级的样式来。
+    fn level_def(&mut self, n: &Node, s: &PStyle, level_no: usize, start: u32) -> Level {
+        let lv = (level_no - 1).min(8);
         let marker_part = n.part("marker");
-        for l in &lines {
-            let lv = (l.level - 1).min(8);
-            if done[lv] {
+        let fs = s.size_pt();
+        let ty = s.list_style_type.clone().unwrap_or(ListStyleType::Disc);
+        let fmt = num_format(&ty);
+        let indent = s.list_indent.map(|x| x.pt(fs, 0.0)).unwrap_or(18.0) * level_no as f32;
+        let hanging = s.list_hanging.map(|x| x.pt(fs, 0.0)).unwrap_or(14.0);
+        let jc = match s.list_marker_align {
+            Some(HAlign::Center) => "center",
+            Some(HAlign::Right) => "right",
+            _ => "left",
+        };
+        let mut level = Level::new(
+            lv,
+            Start::new(start as usize),
+            NumberFormat::new(fmt),
+            LevelText::new(common::word_level_text(s, level_no)),
+            LevelJc::new(jc),
+        )
+        .indent(
+            Some(units::twip(indent)),
+            // Word 里右对齐、居中的编号是以编号位置为右边、中线排的；
+            // 换算一下，让效果和 html、pdf 里「编号在悬挂区里对齐」一致
+            Some(SpecialIndentType::Hanging(units::twip(
+                match s.list_marker_align {
+                    Some(HAlign::Right) => fs * 0.5,
+                    Some(HAlign::Center) => hanging / 2.0,
+                    _ => hanging,
+                },
+            ))),
+            None,
+            None,
+        )
+        .suffix(match s.list_marker_gap {
+            Some(MarkerGap::Space) => LevelSuffixType::Space,
+            Some(MarkerGap::None) => LevelSuffixType::Nothing,
+            _ => LevelSuffixType::Tab,
+        });
+        let mut ms = PStyle::default();
+        if let Some(c) = &s.list_marker_color {
+            ms.color = Some(c.clone());
+        }
+        if let Some(pct) = s.list_marker_size {
+            ms.font_size = Some(Len::Pt(fs * pct / 100.0));
+        }
+        ms.merge(&marker_part);
+        // Word 的编号字号、颜色跟段落标记走，document-render 不写段落标记的 rPr，
+        // 没指定时就用列表文字的字号和颜色，不然编号会是 Word 默认的五号黑字
+        if ms.color.is_none() {
+            ms.color = s.color.clone();
+        }
+        if let Some(c) = &ms.color {
+            level = level.color(c.rgb());
+        }
+        let msz = if ms.font_size.is_some() {
+            ms.size_pt()
+        } else {
+            fs
+        };
+        level = level.size((msz * 2.0).round() as usize);
+        if ms.bold == Some(true) {
+            level = level.bold();
+        }
+        if ms.italic == Some(true) {
+            level = level.italic();
+        }
+        if let Some(f) = &s.list_marker_font {
+            level = level.fonts(RunFonts::new().ascii(f).hi_ansi(f).east_asia(f).cs(f));
+        }
+        if s.list_marker_image.is_some() {
+            self.warn.unsupported(FORMAT, "listMarkerImage", &n.id);
+        }
+        if matches!(s.list_marker_gap, Some(MarkerGap::Len(_))) {
+            self.warn
+                .unsupported(FORMAT, "listMarkerGap（长度，按制表符处理）", &n.id);
+        }
+        if common::legal(&ty) && level_no > 1 {
+            level = level.is_lgl();
+        }
+        level
+    }
+
+    /// 这一级定义的比较用的键：起始号不算在内（接续、覆盖时起始号另给）。
+    fn level_key(&mut self, n: &Node, s: &PStyle, level_no: usize) -> String {
+        format!("{:?}", self.level_def(n, s, level_no, 1))
+    }
+
+    /// 列表的编号结构：
+    /// - 每个列表一个 abstractNum，每一级的定义取这一级第一次出现时的样式；段落引用它的 num。
+    /// - 同一级下某串子列表的定义和 abstractNum 里那一级不一样（有序、无序混用，或 levelN 不同）时，
+    ///   给这串子列表单开一个 num，指向同一个 abstractNum，用 lvlOverride 换掉这一级的定义，
+    ///   并用 startOverride 从头数。上几级仍然共用同一个 abstractNum，父级编号照常连续。
+    /// - continueFrom：第一级定义和被接的列表一样时直接用它的 num，Word 里真正接着数；
+    ///   不一样时单开一个 abstractNum，第一级的 w:start 写算好的起始号。
+    fn list(&mut self, n: &Node, p: &ListProps) {
+        let lines = common::flatten_list(n, p);
+        if lines.is_empty() {
+            return;
+        }
+        let gaps = common::item_gaps(&lines);
+        let first_start = common::list_first_start(n, p);
+        let keys: Vec<String> = lines
+            .iter()
+            .map(|l| {
+                let s = l.style.clone();
+                self.level_key(n, &s, l.level)
+            })
+            .collect();
+        // 能不能直接用被接的列表的 num
+        let shared = p
+            .continue_from
+            .as_ref()
+            .and_then(|f| self.list_nums.get(f))
+            .copied()
+            .filter(|(_, abs)| {
+                self.abs_keys
+                    .get(abs)
+                    .and_then(|k| k[0].as_ref())
+                    .is_some_and(|k| *k == keys[0])
+            });
+        let (main_num, abs_id) = match shared {
+            Some(x) => x,
+            None => {
+                let abs_id = self.next_abs;
+                self.next_abs += 1;
+                let mut abs = AbstractNumbering::new(abs_id);
+                let mut ks: [Option<String>; 9] = Default::default();
+                for (l, k) in lines.iter().zip(&keys) {
+                    let lv = (l.level - 1).min(8);
+                    if ks[lv].is_some() {
+                        continue;
+                    }
+                    ks[lv] = Some(k.clone());
+                    let start = if l.level == 1 {
+                        first_start
+                    } else {
+                        l.style.list_start.unwrap_or(1)
+                    };
+                    let s = l.style.clone();
+                    abs = abs.add_level(self.level_def(n, &s, l.level, start));
+                }
+                self.abstracts.push(abs);
+                self.abs_keys.insert(abs_id, ks);
+                let num = self.next_num;
+                self.next_num += 1;
+                self.nums.push(Numbering::new(num, abs_id));
+                (num, abs_id)
+            }
+        };
+        self.list_nums.insert(n.id.clone(), (main_num, abs_id));
+        // 每串子列表用哪个 num
+        let mut group_num: BTreeMap<usize, usize> = BTreeMap::new();
+        for (l, k) in lines.iter().zip(&keys) {
+            if group_num.contains_key(&l.group) {
                 continue;
             }
-            done[lv] = true;
-            let s = &l.style;
-            let fs = s.size_pt();
-            let ty = s.list_style_type.clone().unwrap_or(ListStyleType::Disc);
-            let fmt = num_format(&ty);
-            let indent = s.list_indent.map(|x| x.pt(fs, 0.0)).unwrap_or(18.0) * l.level as f32;
-            let hanging = s.list_hanging.map(|x| x.pt(fs, 0.0)).unwrap_or(14.0);
-            let jc = match s.list_marker_align {
-                Some(HAlign::Center) => "center",
-                Some(HAlign::Right) => "right",
-                _ => "left",
-            };
-            let mut level = Level::new(
-                lv,
-                Start::new(s.list_start.unwrap_or(1) as usize),
-                NumberFormat::new(fmt),
-                LevelText::new(common::word_level_text(s, l.level)),
-                LevelJc::new(jc),
-            )
-            .indent(
-                Some(units::twip(indent)),
-                // Word 里右对齐、居中的编号是以编号位置为右边、中线排的；
-                // 换算一下，让效果和 html、pdf 里「编号在悬挂区里对齐」一致
-                Some(SpecialIndentType::Hanging(units::twip(
-                    match s.list_marker_align {
-                        Some(HAlign::Right) => fs * 0.5,
-                        Some(HAlign::Center) => hanging / 2.0,
-                        _ => hanging,
-                    },
-                ))),
-                None,
-                None,
-            )
-            .suffix(match s.list_marker_gap {
-                Some(MarkerGap::Space) => LevelSuffixType::Space,
-                Some(MarkerGap::None) => LevelSuffixType::Nothing,
-                _ => LevelSuffixType::Tab,
-            });
-            let mut ms = PStyle::default();
-            if let Some(c) = &s.list_marker_color {
-                ms.color = Some(c.clone());
+            let lv = (l.level - 1).min(8);
+            let same = self.abs_keys[&abs_id][lv].as_ref() == Some(k);
+            if same || l.level == 1 {
+                group_num.insert(l.group, main_num);
+                continue;
             }
-            if let Some(pct) = s.list_marker_size {
-                ms.font_size = Some(Len::Pt(fs * pct / 100.0));
-            }
-            ms.merge(&marker_part);
-            // Word 的编号字号、颜色跟段落标记走，document-render 不写段落标记的 rPr，
-            // 没指定时就用列表文字的字号和颜色，不然编号会是 Word 默认的五号黑字
-            if ms.color.is_none() {
-                ms.color = s.color.clone();
-            }
-            if let Some(c) = &ms.color {
-                level = level.color(c.rgb());
-            }
-            let msz = if ms.font_size.is_some() {
-                ms.size_pt()
-            } else {
-                fs
-            };
-            level = level.size((msz * 2.0).round() as usize);
-            if ms.bold == Some(true) {
-                level = level.bold();
-            }
-            if ms.italic == Some(true) {
-                level = level.italic();
-            }
-            if let Some(f) = &s.list_marker_font {
-                level = level.fonts(RunFonts::new().ascii(f).hi_ansi(f).east_asia(f).cs(f));
-            }
-            if s.list_marker_image.is_some() {
-                self.warn.unsupported(FORMAT, "listMarkerImage", &n.id);
-            }
-            if matches!(s.list_marker_gap, Some(MarkerGap::Len(_))) {
-                self.warn
-                    .unsupported(FORMAT, "listMarkerGap（长度，按制表符处理）", &n.id);
-            }
-            if common::legal(&ty) && l.level > 1 {
-                level = level.is_lgl();
-            }
-            abs = abs.add_level(level);
+            let start = l.style.list_start.unwrap_or(1);
+            let s = l.style.clone();
+            let level = self.level_def(n, &s, l.level, start);
+            let num = self.next_num;
+            self.next_num += 1;
+            self.nums.push(
+                Numbering::new(num, abs_id)
+                    .add_override(LevelOverride::new(lv).start(start as usize).level(level)),
+            );
+            group_num.insert(l.group, num);
         }
-        self.numberings.push((abs, Numbering::new(id, id)));
         let item_part = n.part("item");
         let last = lines.len().saturating_sub(1);
         for (i, l) in lines.iter().enumerate() {
@@ -1323,13 +1417,26 @@ impl Ctx<'_> {
             if i < last {
                 item.space_after = item_part.space_after;
             }
+            // itemSpacing：项间距只写在下一项的段前上，上一项段后写 0，
+            // Word 段前段后取大的，这样间距正好是 itemSpacing
+            if i > 0
+                && let Some(g) = gaps[i - 1]
+            {
+                item.space_before = Some(g);
+            }
+            if i < last && gaps[i].is_some() {
+                item.space_after = Some(Len::Pt(0.0));
+            }
             // 缩进由编号定义管，段落上不再写
             let mut ps = item.clone();
             ps.margin_left = None;
             ps.text_indent = None;
             ps.hanging_indent = None;
-            let para = Paragraph::new()
-                .numbering(NumberingId::new(id), IndentLevel::new((l.level - 1).min(8)));
+            let num = group_num[&l.group];
+            let para = Paragraph::new().numbering(
+                NumberingId::new(num),
+                IndentLevel::new((l.level - 1).min(8)),
+            );
             let para = self.para(para, &ps, &n.id);
             let runs = common::rebase_runs(l.item.text(), &n.style, &item);
             let para = self.inline(para, runs, &n.id);
@@ -2376,7 +2483,37 @@ fn fix_numbering(xml: &[u8]) -> Vec<u8> {
         rest = &rest[close + "</w:lvl>".len()..];
     }
     out.push_str(rest);
-    out.into_bytes()
+    fix_lvl_override(&out).into_bytes()
+}
+
+/// w:lvlOverride 里 schema 要求先 w:startOverride 后 w:lvl，docx-rs 写反了。
+fn fix_lvl_override(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(at) = find_open(rest, "w:lvlOverride") {
+        let Some(head_end) = rest[at..].find('>').map(|j| at + j + 1) else {
+            break;
+        };
+        if rest[..head_end].ends_with("/>") {
+            out.push_str(&rest[..head_end]);
+            rest = &rest[head_end..];
+            continue;
+        }
+        let Some(close) = rest[head_end..]
+            .find("</w:lvlOverride>")
+            .map(|j| head_end + j)
+        else {
+            break;
+        };
+        out.push_str(&rest[..head_end]);
+        let mut kids = xml_children(&rest[head_end..close]);
+        sort_by_order(&mut kids, &["w:startOverride", "w:lvl"]);
+        kids.into_iter().for_each(|k| out.push_str(&k));
+        out.push_str("</w:lvlOverride>");
+        rest = &rest[close + "</w:lvlOverride>".len()..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// 找名字正好是 `name` 的开标签（`<w:lvl` 后面不能紧跟字母，免得撞上 `<w:lvlText`）。

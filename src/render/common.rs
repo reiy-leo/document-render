@@ -3,9 +3,9 @@
 use std::collections::HashSet;
 
 use crate::{
-    components::{Cell, Inline, ListItem, RowHeight, Run, TableLook, TableProps},
+    components::{Cell, Inline, ListItem, ListProps, RowHeight, Run, TableLook, TableProps},
     doc::Node,
-    style::{Border, ColWidth, Edge, ListStyleType, Style},
+    style::{Border, ColWidth, Edge, Len, ListStyleType, Style},
 };
 
 /// 同一类警告只报一次。
@@ -116,67 +116,101 @@ pub struct ListLine<'a> {
     /// 编号或符号的文字（已按 listMarkerFormat 拼好）
     pub marker: String,
     pub style: Style,
+    /// 这一项属于哪一串子列表：同一串的项编号相同，第一级是 0
+    pub group: usize,
 }
 
-/// 把嵌套列表摊平，算好每项的编号。
-pub fn flatten_list<'a>(n: &Node, items: &'a [ListItem], ordered: bool) -> Vec<ListLine<'a>> {
+/// 把嵌套列表摊平，算好每项的编号。`continueFrom` 接续时第一级从 `start_at` 起数。
+pub fn flatten_list<'a>(n: &Node, p: &'a ListProps) -> Vec<ListLine<'a>> {
     let mut out = Vec::new();
-    let mut counters: Vec<u32> = Vec::new();
-    let mut types: Vec<ListStyleType> = Vec::new();
-    walk(n, items, ordered, 1, &mut counters, &mut types, &mut out);
+    let mut w = Walk {
+        counters: Vec::new(),
+        types: Vec::new(),
+        groups: 0,
+    };
+    w.walk(n, &p.items, p.ordered, 1, p.start_at, 0, &mut out);
     out
 }
 
-fn walk<'a>(
-    n: &Node,
-    items: &'a [ListItem],
-    ordered: bool,
-    level: usize,
-    counters: &mut Vec<u32>,
-    types: &mut Vec<ListStyleType>,
-    out: &mut Vec<ListLine<'a>>,
-) {
-    let style = list_level_style(n, level, ordered);
-    let ty = style.list_style_type.clone().unwrap();
-    let start = style.list_start.unwrap_or(1);
-    counters.truncate(level - 1);
-    types.truncate(level - 1);
-    counters.push(start.saturating_sub(1));
-    types.push(ty.clone());
-    for it in items {
-        counters[level - 1] += 1;
-        // 符号类的级别不用 listMarkerFormat，只出符号
-        let marker = match ty.bullet().filter(|_| !ty.ordered()) {
-            Some(b) => b,
-            None => {
-                let f = style
-                    .list_marker_format
-                    .clone()
-                    .unwrap_or_else(|| format!("%{level}."));
-                fill_format(&f, counters, types, legal(&ty))
+/// 第一级的起始号：接续时是算好的号，不然是 listStart，都没有是 1。
+pub fn list_first_start(n: &Node, p: &ListProps) -> u32 {
+    p.start_at
+        .or(list_level_style(n, 1, p.ordered).list_start)
+        .unwrap_or(1)
+}
+
+struct Walk {
+    counters: Vec<u32>,
+    types: Vec<ListStyleType>,
+    groups: usize,
+}
+
+impl Walk {
+    #[allow(clippy::too_many_arguments)]
+    fn walk<'a>(
+        &mut self,
+        n: &Node,
+        items: &'a [ListItem],
+        ordered: bool,
+        level: usize,
+        start_at: Option<u32>,
+        group: usize,
+        out: &mut Vec<ListLine<'a>>,
+    ) {
+        let style = list_level_style(n, level, ordered);
+        let ty = style.list_style_type.clone().unwrap();
+        let start = start_at.or(style.list_start).unwrap_or(1);
+        self.counters.truncate(level - 1);
+        self.types.truncate(level - 1);
+        self.counters.push(start.saturating_sub(1));
+        self.types.push(ty.clone());
+        for it in items {
+            self.counters[level - 1] += 1;
+            // 符号类的级别不用 listMarkerFormat，只出符号
+            let marker = match ty.bullet().filter(|_| !ty.ordered()) {
+                Some(b) => b,
+                None => {
+                    let f = style
+                        .list_marker_format
+                        .clone()
+                        .unwrap_or_else(|| format!("%{level}."));
+                    fill_format(&f, &self.counters, &self.types, legal(&ty))
+                }
+            };
+            out.push(ListLine {
+                level,
+                item: it,
+                marker,
+                style: style.clone(),
+                group,
+            });
+            if !it.children().is_empty() {
+                let sub_ordered = it.ordered().unwrap_or(ordered);
+                self.groups += 1;
+                let g = self.groups;
+                self.walk(n, it.children(), sub_ordered, level + 1, None, g, out);
+                self.counters.truncate(level);
+                self.types.truncate(level);
             }
-        };
-        out.push(ListLine {
-            level,
-            item: it,
-            marker,
-            style: style.clone(),
-        });
-        if !it.children().is_empty() {
-            let sub_ordered = it.ordered().unwrap_or(ordered);
-            walk(
-                n,
-                it.children(),
-                sub_ordered,
-                level + 1,
-                counters,
-                types,
-                out,
-            );
-            counters.truncate(level);
-            types.truncate(level);
         }
     }
+}
+
+/// 相邻两项之间按 itemSpacing 算的距离：第 i 个是第 i 项和第 i+1 项之间。
+/// 用两项里层级深的那一项的 itemSpacing（子列表首项和父项之间、末项和下一个父项之间都算子列表那一层）；
+/// 那一层没写 itemSpacing 时是 None，照旧用 item 部位的段前段后。
+pub fn item_gaps(lines: &[ListLine]) -> Vec<Option<Len>> {
+    lines
+        .windows(2)
+        .map(|w| {
+            let deeper = if w[1].level >= w[0].level {
+                &w[1]
+            } else {
+                &w[0]
+            };
+            deeper.style.item_spacing
+        })
+        .collect()
 }
 
 /// 这一级用阿拉伯数字时，`%1.%2` 里上几级的编号也写成阿拉伯数字（Word 叫 isLgl），

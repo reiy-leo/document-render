@@ -298,6 +298,17 @@ pub struct ListProps {
     #[serde(default)]
     pub ordered: bool,
     pub items: Vec<ListItem>,
+    /// 接着前面哪个 List 编号：写那个 List 元素的 id。第一级从它最后一项之后接着数，
+    /// 子级照常在新的第一级项下从头数。不能和 listStart 一起用
+    #[serde(
+        default,
+        rename = "continueFrom",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub continue_from: Option<String>,
+    /// 建树时算好的第一级起始号（接续时用），不出现在 JSON 里
+    #[serde(skip)]
+    pub start_at: Option<u32>,
 }
 
 /// 哪些表格部位生效，对应 Word 的 w:tblLook。
@@ -781,7 +792,7 @@ pub const BUILTINS: &[Spec] = &[
     },
     Spec {
         name: "List",
-        description: "列表，ordered 为 true 时带编号；项可以带子列表",
+        description: "列表，ordered 为 true 时带编号；项可以带子列表；continueFrom 接着前面某个列表编号",
         container: false,
         parts: LIST_PARTS,
         schema: || schema_for!(ListProps),

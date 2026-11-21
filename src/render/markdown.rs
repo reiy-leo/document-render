@@ -125,7 +125,9 @@ impl Md<'_> {
             }
             Component::List(p) => {
                 let mut s = String::new();
-                self.list(n, &p.items, p.ordered, &mut s);
+                // 第一级的起始号：listStart 或 continueFrom 接着数的号；子级从 1 起
+                let start = common::list_first_start(n, p);
+                self.list(n, &p.items, p.ordered, start, &mut s);
                 self.blocks.push(s.trim_end().to_string());
             }
             Component::Table(p) => self.table(n, p),
@@ -195,10 +197,10 @@ impl Md<'_> {
         ));
     }
 
-    fn list(&mut self, n: &Node, items: &[ListItem], ordered: bool, out: &mut String) {
+    fn list(&mut self, n: &Node, items: &[ListItem], ordered: bool, start: u32, out: &mut String) {
         for (i, it) in items.iter().enumerate() {
             let marker = if ordered {
-                format!("{}.", i + 1)
+                format!("{}.", start as usize + i)
             } else {
                 "-".to_string()
             };
@@ -211,7 +213,7 @@ impl Md<'_> {
                 let o = it.ordered().unwrap_or(ordered);
                 // 子列表缩进到父项文字对齐的位置
                 let mut sub = String::new();
-                self.list(n, kids, o, &mut sub);
+                self.list(n, kids, o, 1, &mut sub);
                 for line in sub.lines() {
                     if line.is_empty() {
                         out.push('\n');

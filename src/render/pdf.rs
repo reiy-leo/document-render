@@ -914,11 +914,12 @@ impl Markup<'_> {
     }
 
     fn list(&mut self, n: &Node, p: &ListProps, parent: &Style) {
-        let lines = common::flatten_list(n, &p.items, p.ordered);
+        let lines = common::flatten_list(n, p);
+        let gaps = common::item_gaps(&lines);
         let marker_part = n.part("marker");
         let item_part = n.part("item");
         let mut body = String::new();
-        for l in &lines {
+        for (i, l) in lines.iter().enumerate() {
             let s = &l.style;
             let fs = s.size_pt();
             let indent = s.list_indent.map(|x| x.pt(fs, 0.0)).unwrap_or(18.0) * l.level as f32;
@@ -975,6 +976,18 @@ impl Markup<'_> {
             ls.hanging_indent = None;
             ls.space_before = None;
             ls.space_after = None;
+            // 项与项之间：写了 itemSpacing 就是它；没写时和 Word 一样，
+            // 上一项的段后和这一项的段前取大的（item 部位）
+            if i > 0 {
+                ls.space_before = match gaps[i - 1] {
+                    Some(g) => Some(g),
+                    None => {
+                        let pt = |x: Option<Len>| x.map_or(0.0, |x| x.pt(fs, 0.0));
+                        let g = pt(item_part.space_after).max(pt(item_part.space_before));
+                        (g > 0.0).then_some(Len::Pt(g))
+                    }
+                };
+            }
             ls.background = None;
             ls.border = None;
             ls.padding = None;

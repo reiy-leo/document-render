@@ -1279,6 +1279,9 @@ pub struct Style {
     pub list_indent: Option<Len>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub list_hanging: Option<Len>,
+    /// 列表项之间的距离（上一项最后一行和下一项第一行之间），不管列表整体的段前段后
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub item_spacing: Option<Len>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub list_start: Option<u32>,
 
@@ -1328,7 +1331,8 @@ macro_rules! with_fields {
             align, line_height, text_indent, hanging_indent, widow_control, contextual_spacing,
             auto_space, kinsoku, direction,
             list_style_type, list_marker_format, list_marker_image, list_marker_color, list_marker_font,
-            list_marker_size, list_marker_align, list_marker_gap, list_indent, list_hanging;
+            list_marker_size, list_marker_align, list_marker_gap, list_indent, list_hanging,
+            item_spacing;
             local: vertical_align, space_before, space_after, margin_left, margin_right, keep_with_next,
             keep_together, page_break_before, wrap, outline_level,
             border, border_top, border_right, border_bottom, border_left, border_between,
@@ -1400,6 +1404,7 @@ const INHERITED_FIELDS: &[&str] = &[
     "listMarkerGap",
     "listIndent",
     "listHanging",
+    "itemSpacing",
 ];
 
 impl Style {

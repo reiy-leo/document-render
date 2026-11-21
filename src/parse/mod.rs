@@ -654,6 +654,10 @@ struct Ctx {
     tbl_base: Option<(PPr, Style)>,
     /// 预扫一遍正文段落的有效样式：(种类, 有效样式)，用来定 Document、Text、Heading.N 的样式
     stats: Vec<(Kind, Map<String, Value>)>,
+    /// 正文里已经读出的列表：(numId, abstractNumId, 元素 id)，认 continueFrom 用
+    list_hist: Vec<(i64, i64, String)>,
+    /// 当前在不在正文里（页眉页脚里的列表不接续）
+    in_body: bool,
 }
 
 /// 预扫时段落的种类。
@@ -767,6 +771,8 @@ impl Ctx {
             in_table: 0,
             tbl_base: None,
             stats: Vec::new(),
+            list_hist: Vec::new(),
+            in_body: false,
         })
     }
 
@@ -921,6 +927,13 @@ impl Ctx {
 
     /// 处理一串块级内容（body、页眉页脚、sdtContent），元素 id 追加到 `out`。
     fn blocks(&mut self, parent: Node, out: &mut Vec<String>, body: bool) {
+        let saved_body = self.in_body;
+        self.in_body = body;
+        self.blocks_in(parent, out, body);
+        self.in_body = saved_body;
+    }
+
+    fn blocks_in(&mut self, parent: Node, out: &mut Vec<String>, body: bool) {
         let mut list: Option<(ListRef, Vec<Para>)> = None;
         let kids: Vec<Node> = parent.children().filter(|c| c.is_element()).collect();
         for n in kids {
@@ -929,7 +942,16 @@ impl Ctx {
                 if para.list.is_some() && !para.in_toc && para.toc.is_none() {
                     let lr = para.list.clone().unwrap();
                     match &mut list {
-                        Some((cur, items)) if cur.abs == lr.abs && cur.num_id == lr.num_id => {
+                        // 同一个 num 接着收；更深一级、换了 num 的段落（同一级里类型不同的子列表
+                        // 会单开 num）算当前项的子列表
+                        Some((cur, items))
+                            if cur.num_id == lr.num_id
+                                || items
+                                    .iter()
+                                    .filter_map(|p| p.list.as_ref().map(|l| l.ilvl))
+                                    .min()
+                                    .is_some_and(|m| lr.ilvl > m) =>
+                        {
                             items.push(para.clone())
                         }
                         _ => {
@@ -2443,8 +2465,7 @@ impl Ctx {
         let lvl_ordered = |i: usize| -> bool { list_type(&levels[i]).0.ordered() };
         let ordered = lvl_ordered(min_lvl);
         let fields =
-            |ctx: &mut Ctx, i: usize, level: usize, para: Option<&Para>| -> Map<String, Value> {
-                let l = &levels[i];
+            |ctx: &mut Ctx, l: &Lvl, level: usize, para: Option<&Para>| -> Map<String, Value> {
                 let (ty, font) = list_type(l);
                 let mut m = Map::new();
                 m.insert(
@@ -2516,7 +2537,33 @@ impl Ctx {
                 .iter()
                 .find(|p| p.list.as_ref().is_some_and(|l| l.ilvl == i))
         };
-        let f1 = fields(self, min_lvl, 1, first_para_of(min_lvl));
+        // 某一级的定义：取这一级第一项自己的 num（同一级里不同的子列表可能各有各的定义）
+        let lvl_at = |i: usize| -> Lvl {
+            first_para_of(i)
+                .and_then(|p| p.list.as_ref())
+                .map(|l| l.levels[i].clone())
+                .unwrap_or_else(|| levels[i].clone())
+        };
+        let own_ordered = |p: &Para, i: usize| -> bool {
+            p.list
+                .as_ref()
+                .map(|l| list_type(&l.levels[i]).0.ordered())
+                .unwrap_or_else(|| list_type(&levels[i]).0.ordered())
+        };
+        // 接着前面哪个列表编号：同一个 num，或者同一个 abstractNum 而且这个 num 第一级没写 startOverride
+        // （Word 里这两种都接着数）
+        let continue_from = if self.in_body && min_lvl == 0 {
+            self.list_hist
+                .iter()
+                .rev()
+                .find(|(num, abs, _)| {
+                    *num == lr.num_id || (*abs == lr.abs && !self.numbering.restarts(lr.num_id, 0))
+                })
+                .map(|x| x.2.clone())
+        } else {
+            None
+        };
+        let f1 = fields(self, &lvl_at(min_lvl), 1, first_para_of(min_lvl));
         let exp_style = self.expected("List", None, None);
         let exp = to_map(&exp_style);
         let mut d = Map::new();
@@ -2532,6 +2579,10 @@ impl Ctx {
         d.extend(diff(&eff, &exp, &keys, &soft));
         // 第一级的列表字段：编号类型和默认一样时不写
         for (k, v) in &f1 {
+            // 接续时起始号由前一个列表算，不写 listStart
+            if k == "listStart" && continue_from.is_some() {
+                continue;
+            }
             if k == "listStyleType" {
                 let def =
                     serde_json::to_value(crate::render::common::default_type(1, ordered)).unwrap();
@@ -2570,11 +2621,14 @@ impl Ctx {
         };
         let mut ordered_at: Vec<bool> = vec![ordered];
         for i in min_lvl + 1..=used.last().copied().unwrap_or(min_lvl) {
-            ordered_at.push(lvl_ordered(i));
+            ordered_at.push(match first_para_of(i) {
+                Some(p) => own_ordered(p, i),
+                None => lvl_ordered(i),
+            });
         }
         for i in used {
             let level = i - min_lvl + 1;
-            let fi = fields(self, i, level, first_para_of(i));
+            let fi = fields(self, &lvl_at(i), level, first_para_of(i));
             let mut base = base_list.clone();
             let o = ordered_at.get(level - 1).copied().unwrap_or(ordered);
             base.insert(
@@ -2602,6 +2656,41 @@ impl Ctx {
                     pd.insert(k.clone(), def);
                 }
             }
+            // 这一级的子列表类型不一样（有的有序、有的无序）：levelN 不写编号类型，
+            // 靠各项的 ordered 和这一级的默认类型；不是默认类型的会丢，给个警告
+            let tys: Vec<ListStyleType> = items
+                .iter()
+                .filter_map(|p| p.list.as_ref())
+                .filter(|l| l.ilvl == i)
+                .map(|l| list_type(&l.levels[i]).0)
+                .collect();
+            if tys.windows(2).any(|w| w[0] != w[1]) {
+                for k in FIRST_ONLY {
+                    pd.remove(*k);
+                }
+                // 模板只管有序的子列表：取这一级第一串有序子列表的
+                if let Some(l) = items
+                    .iter()
+                    .filter_map(|p| p.list.as_ref())
+                    .filter(|l| l.ilvl == i)
+                    .map(|l| &l.levels[i])
+                    .find(|l| list_type(l).0.ordered())
+                {
+                    let rt = renumber(&l.text, min_lvl);
+                    if rt != format!("%{level}.") {
+                        pd.insert("listMarkerFormat".into(), json!(rt));
+                    }
+                }
+                if tys
+                    .iter()
+                    .any(|t| *t != crate::render::common::default_type(level, t.ordered()))
+                {
+                    self.warns.once(
+                        "mixedlevel",
+                        "同一级里有不同编号类型的子列表，只保留有序、无序，具体类型按默认".into(),
+                    );
+                }
+            }
             if !pd.is_empty() {
                 parts.insert(format!("level{level}"), Value::Object(pd));
             }
@@ -2610,35 +2699,68 @@ impl Ctx {
         let contextual = items.iter().all(|p| p.ppr.contextual == Some(true));
         d.remove("contextualSpacing");
         if items.len() > 1 && !contextual {
+            let sp = |p: &Para, after: bool| -> f32 {
+                let st = p.ppr.to_style(fs);
+                let v = if after {
+                    st.space_after
+                } else {
+                    st.space_before
+                };
+                v.map(|l| l.pt(fs, 0.0)).unwrap_or(0.0)
+            };
             let afters: Vec<f32> = items[..items.len() - 1]
                 .iter()
-                .map(|p| {
-                    p.ppr
-                        .to_style(fs)
-                        .space_after
-                        .map(|l| l.pt(fs, 0.0))
-                        .unwrap_or(0.0)
-                })
+                .map(|p| sp(p, true))
                 .collect();
-            let befores: Vec<f32> = items[1..]
-                .iter()
-                .map(|p| {
-                    p.ppr
-                        .to_style(fs)
-                        .space_before
-                        .map(|l| l.pt(fs, 0.0))
-                        .unwrap_or(0.0)
-                })
-                .collect();
-            let mut ip = Map::new();
-            if afters[0] > 0.0 {
-                ip.insert("spaceAfter".into(), json!(round2(afters[0])));
+            let befores: Vec<f32> = items[1..].iter().map(|p| sp(p, false)).collect();
+            // 相邻两项的实际间距（Word 取段后、段前里大的），按两项里深的那一级归类
+            let lv = |p: &Para| {
+                p.list
+                    .as_ref()
+                    .map_or(0, |l| l.ilvl.saturating_sub(min_lvl))
+                    + 1
+            };
+            let mut by_level: BTreeMap<usize, Vec<f32>> = BTreeMap::new();
+            for (k, w) in items.windows(2).enumerate() {
+                let g = round2(afters[k].max(befores[k]));
+                by_level
+                    .entry(lv(&w[0]).max(lv(&w[1])))
+                    .or_default()
+                    .push(g);
             }
-            if befores[0] > 0.0 {
-                ip.insert("spaceBefore".into(), json!(round2(befores[0])));
-            }
-            if !ip.is_empty() {
-                parts.insert("item".into(), Value::Object(ip));
+            let uniform = by_level
+                .values()
+                .all(|v| v.iter().all(|x| (x - v[0]).abs() < 0.01));
+            let any_gap = by_level.values().flatten().any(|x| *x > 0.0);
+            if uniform && any_gap {
+                // 每一级的间距都一致：还原成 itemSpacing，最浅那一级的写在元素上，别的级不同才写进 levelN
+                let mut it = by_level.iter();
+                let (_, base) = it.next().unwrap();
+                let base = base[0];
+                let exp_sp = exp.get("itemSpacing").and_then(|v| v.as_f64());
+                if exp_sp.is_none_or(|e| (e as f32 - base).abs() >= 0.01) {
+                    d.insert("itemSpacing".into(), json!(base));
+                }
+                for (level, v) in it {
+                    if (v[0] - base).abs() >= 0.01 {
+                        let key = format!("level{level}");
+                        let e = parts.entry(key).or_insert_with(|| json!({}));
+                        if let Some(m) = e.as_object_mut() {
+                            m.insert("itemSpacing".into(), json!(v[0]));
+                        }
+                    }
+                }
+            } else {
+                let mut ip = Map::new();
+                if afters[0] > 0.0 {
+                    ip.insert("spaceAfter".into(), json!(round2(afters[0])));
+                }
+                if befores[0] > 0.0 {
+                    ip.insert("spaceBefore".into(), json!(round2(befores[0])));
+                }
+                if !ip.is_empty() {
+                    parts.insert("item".into(), Value::Object(ip));
+                }
             }
         }
         if levels[min_lvl].rpr.bold == Some(true) {
@@ -2653,6 +2775,8 @@ impl Ctx {
             text: Value,
             kids: Vec<It>,
             ordered: Option<bool>,
+            /// 这一项所在的那串列表有没有编号
+            own: bool,
         }
         let mut root: Vec<It> = Vec::new();
         for p in &items {
@@ -2666,26 +2790,40 @@ impl Ctx {
             let segs: Vec<Seg> = p.segs.iter().filter(|s| !s.is_break()).cloned().collect();
             let text = self.inline_json(&segs, &elem_style);
             let mut cur = &mut root;
+            let ilvl = p.list.as_ref().map_or(min_lvl, |x| x.ilvl);
             for depth in 0..l {
                 if cur.is_empty() {
                     cur.push(It {
                         text: json!(""),
                         kids: Vec::new(),
                         ordered: None,
+                        own: ordered_at.get(depth).copied().unwrap_or(ordered),
                     });
                 }
                 let parent = cur.last_mut().unwrap();
-                let child_ordered = ordered_at.get(depth + 1).copied().unwrap_or(ordered);
-                let parent_ordered = ordered_at.get(depth).copied().unwrap_or(ordered);
-                if child_ordered != parent_ordered {
-                    parent.ordered = Some(child_ordered);
+                // 子列表有没有编号看它第一项自己的定义
+                if parent.kids.is_empty() {
+                    let child_ordered = if depth + 1 == l {
+                        own_ordered(p, ilvl)
+                    } else {
+                        ordered_at.get(depth + 1).copied().unwrap_or(ordered)
+                    };
+                    if child_ordered != parent.own {
+                        parent.ordered = Some(child_ordered);
+                    }
                 }
                 cur = &mut parent.kids;
             }
+            let own = if l == 0 {
+                ordered
+            } else {
+                own_ordered(p, ilvl)
+            };
             cur.push(It {
                 text,
                 kids: Vec::new(),
                 ordered: None,
+                own,
             });
         }
         fn to_json(items: Vec<It>) -> Value {
@@ -2712,6 +2850,12 @@ impl Ctx {
         }
         props.insert("items".into(), to_json(root));
         let id = self.id("list");
+        if let Some(f) = continue_from {
+            props.insert("continueFrom".into(), json!(f));
+        }
+        if self.in_body {
+            self.list_hist.push((lr.num_id, lr.abs, id.clone()));
+        }
         let mut el = json!({ "type": "List", "props": props });
         compact(&mut d);
         if !d.is_empty() {
