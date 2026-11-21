@@ -952,6 +952,7 @@ prop `type`：`string`（默认）`number` `integer` `boolean` `array` `object` 
 
 - docx：本机缺字体同样报错（见 4.1）。图片只收 png/jpeg/gif/webp，SVG 和远程图片变成 `[alt]` 加警告。段落 `padding` 只在有 `border` 时生效。目录要在 Word 里更新域才有页码。每节末尾多一个空段落放节设置。字体只写回退列表里的第一个。
 - pdf（Typst）：字体按英文族名在本机找，找不到就报错（`--allow-missing-fonts` 时退回默认字体并给警告）。中文没有斜体。支持 SVG，不支持远程图片。颜色只认十六进制。
+- 中文断行：docx 和 pdf 都照 Word 默认设置，逐行能放就放，标点占整字宽、不压缩，行尾标点不悬挂到版心外。pdf 两端对齐的字距可能不太匀；数字、字母附近偶尔差一个字。
 - html：默认一长条网页，分页、页眉页脚、表头重复只在打印时出现；`--paged`/`paged: true` 才按页显示并填页码。公式写成 MathML。
 - md：只留结构；合并格的表格写成内嵌 HTML，Callout 写成 `> [!NOTE]`，公式写成 `$…$`/`$$…$$`；样式、分栏、ColumnBreak 都丢掉。
 - 表达不了的样式一律警告不报错，所以「`check` 通过」不代表每个样式在每种格式里都生效。

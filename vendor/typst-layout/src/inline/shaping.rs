@@ -262,6 +262,9 @@ impl ShapedGlyph {
                     ),
                 ),
             }
+        } else if !cjk_punct_compression() && self.is_cjk_punctuation() {
+            // document-render patch: punctuation keeps its full width.
+            Adjustability::default()
         } else if self.is_cjk_left_aligned_punctuation(style) {
             Adjustability {
                 stretchability: (Em::zero(), Em::zero()),
@@ -1316,7 +1319,10 @@ fn calculate_adjustability(ctx: &mut ShapingContext, lang: Lang, region: Option<
     let mut glyphs = ctx.glyphs.iter_mut().peekable();
     while let Some(glyph) = glyphs.next() {
         // CNS style needs not further adjustment.
-        if glyph.is_cjk_punctuation() && matches!(style, CjkPunctStyle::Cns) {
+        // document-render patch: nor does switched-off compression.
+        if glyph.is_cjk_punctuation()
+            && (matches!(style, CjkPunctStyle::Cns) || !cjk_punct_compression())
+        {
             continue;
         }
 
@@ -1399,6 +1405,26 @@ pub enum CjkPunctStyle {
     Cns,
     /// Standard JIS X 4051, used in Japan.
     Jis,
+}
+
+// document-render patch: switch for CJK punctuation compression.
+static CJK_PUNCT_COMPRESSION: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+
+/// document-render patch: turn CJK punctuation compression on or off.
+///
+/// On (the default) is upstream behaviour. Off leaves every CJK punctuation
+/// mark at its full advance: no consecutive-punctuation adjustment, no
+/// shrinking at line start or line end, and no shrinkability during
+/// justification. Call it once before laying out anything; layout results
+/// are memoized, so flipping it later in the same process is not supported.
+pub fn set_cjk_punct_compression(on: bool) {
+    CJK_PUNCT_COMPRESSION.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// document-render patch: whether CJK punctuation compression is on.
+pub(crate) fn cjk_punct_compression() -> bool {
+    CJK_PUNCT_COMPRESSION.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 pub fn cjk_punct_style(lang: Lang, region: Option<Region>) -> CjkPunctStyle {

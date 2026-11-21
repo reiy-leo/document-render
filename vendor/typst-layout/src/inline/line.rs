@@ -10,7 +10,7 @@ use typst_utils::Numeric;
 
 use super::*;
 use crate::inline::linebreak::Trim;
-use crate::inline::shaping::Adjustability;
+use crate::inline::shaping::{Adjustability, cjk_punct_compression};
 use crate::modifiers::layout_and_modify;
 
 const SHY: char = '\u{ad}';
@@ -378,7 +378,8 @@ fn adjust_cj_at_line_start(p: &Preparation, items: &mut Items) {
     let Some(shaped) = items.leading_text_mut() else { return };
     let Some(glyph) = shaped.glyphs.first() else { return };
 
-    if glyph.is_cjk_right_aligned_punctuation() {
+    // document-render patch: `cjk_punct_compression()` check.
+    if glyph.is_cjk_right_aligned_punctuation() && cjk_punct_compression() {
         // If the first glyph is a CJK punctuation, we want to
         // shrink it.
         let glyph = shaped.glyphs.to_mut().first_mut().unwrap();
@@ -406,7 +407,8 @@ fn adjust_cj_at_line_end(p: &Preparation, items: &mut Items) {
     // Deal with CJK punctuation at line ends.
     let style = cjk_punct_style(shaped.lang, shaped.region);
 
-    if glyph.is_cjk_left_aligned_punctuation(style) {
+    // document-render patch: `cjk_punct_compression()` check.
+    if glyph.is_cjk_left_aligned_punctuation(style) && cjk_punct_compression() {
         // If the last glyph is a CJK punctuation, we want to
         // shrink it.
         let shrink = glyph.shrinkability().1;

@@ -29,6 +29,10 @@ rmcp = { version = "3.11.0", features = ["server", "macros", "transport-io"] }
 tokio = { version = "1", features = ["rt", "io-std"] }
 typst-kit = { version = "0.15.1", default-features = false, features = ["embedded-fonts", "scan-fonts"] }
 
+# typst-layout 0.15.1 with a switch that turns off CJK punctuation
+# compression, so pdf line breaks match Word. See vendor/typst-layout/PATCH.md.
+[patch.crates-io]
+typst-layout = { path = "vendor/typst-layout" }
 
 [profile.release]
 lto = "thin"

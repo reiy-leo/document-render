@@ -245,6 +245,8 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> anyhow::Result<Output> 
         docx = docx.add_numbering(num);
     }
     let mut xml = docx.build();
+    xml.settings = cjk_wrap_settings(&xml.settings);
+    xml.styles = cjk_wrap_defaults(&xml.styles);
     xml.numberings = fix_numbering(&xml.numberings);
     xml.document = mark_table_headers(&xml.document, &r.repeat_heads);
     xml.document = fix_sections(&xml.document, &fixes);
@@ -299,6 +301,53 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> anyhow::Result<Output> 
         bytes: buf.into_inner(),
         warnings: r.warn.list,
     })
+}
+
+/// 中文断行跟 pdf 一致：标点不压缩（字符间距控制写 doNotCompress）。
+/// docx-rs 的 character_spacing_control 写在 w:compat 里面，位置不对，所以自己插在 w:compat 前面
+/// （CT_Settings 里它排在 compat 之前）。
+fn cjk_wrap_settings(xml: &[u8]) -> Vec<u8> {
+    const EL: &str = r#"<w:characterSpacingControl w:val="doNotCompress" />"#;
+    let s = String::from_utf8_lossy(xml);
+    if s.contains("<w:characterSpacingControl") {
+        return xml.to_vec();
+    }
+    match s.find("<w:compat>").or_else(|| s.find("</w:settings>")) {
+        Some(i) => format!("{}{EL}{}", &s[..i], &s[i..]).into_bytes(),
+        None => xml.to_vec(),
+    }
+}
+
+/// 中文断行跟 pdf 一致：段落默认属性里关掉行尾标点悬挂（w:overflowPunct=0）。
+/// pdf 挂不了中文标点；行首标点 pdf 也不压，Word 默认也不压（不写 topLinePunct）。
+fn cjk_wrap_defaults(xml: &[u8]) -> Vec<u8> {
+    const EL: &str = r#"<w:overflowPunct w:val="0" />"#;
+    let s = String::from_utf8_lossy(xml);
+    let Some(d) = s.find("<w:pPrDefault>") else {
+        // 没有段落默认属性就补一个，放在 docDefaults 末尾
+        return match s.find("</w:docDefaults>") {
+            Some(i) => format!(
+                "{}<w:pPrDefault><w:pPr>{EL}</w:pPr></w:pPrDefault>{}",
+                &s[..i],
+                &s[i..]
+            )
+            .into_bytes(),
+            None => xml.to_vec(),
+        };
+    };
+    // w:overflowPunct 在 CT_PPrBase 里排在 pStyle…kinsoku、wordWrap 之后；docx-rs 的默认段落属性
+    // 只写 w:rPr（或空 w:pPr），放在最前面就是对的顺序
+    let at = d + "<w:pPrDefault>".len();
+    let after = &s[at..];
+    if after.starts_with("<w:pPr>") {
+        let i = at + "<w:pPr>".len();
+        return format!("{}{EL}{}", &s[..i], &s[i..]).into_bytes();
+    }
+    let skip = ["<w:pPr />", "<w:pPr/>"]
+        .iter()
+        .find(|e| after.starts_with(**e))
+        .map_or(0, |e| e.len());
+    format!("{}<w:pPr>{EL}</w:pPr>{}", &s[..at], &s[at + skip..]).into_bytes()
 }
 
 /// 页边距，含页眉页脚距离；装订线算在左边。

@@ -57,11 +57,28 @@ const MONO_FONTS: &[&str] = crate::fonts::DEFAULT_MONO;
 const MATH_FONT: &str = "New Computer Modern Math";
 
 pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> anyhow::Result<Output> {
+    let (document, warnings) = layout(doc, tree, opts)?;
+    let bytes = typst_pdf::pdf(&document, &typst_pdf::PdfOptions::default()).map_err(|errs| {
+        let msgs: Vec<String> = errs.iter().map(|e| e.message.to_string()).collect();
+        anyhow::anyhow!("生成 PDF 失败：{}", msgs.join("；"))
+    })?;
+    Ok(Output { bytes, warnings })
+}
+
+/// 排版，返回 Typst 排好的页面和警告。测试里拿它看每个字的位置。
+pub fn layout(
+    doc: &Doc,
+    tree: &Node,
+    opts: &Options,
+) -> anyhow::Result<(PagedDocument, Vec<String>)> {
     let m = markup_with(doc, tree, opts, false);
     let (mut source, mut warnings) = (m.out, m.warn.list);
     if std::env::var_os("DOCUMENT_RENDER_DEBUG_TYPST").is_some() {
         eprintln!("{source}");
     }
+    // 中文标点不压缩（打过补丁的 typst-layout 的开关，见 vendor/typst-layout/PATCH.md），
+    // 和 Word 默认的「不压缩」一致
+    typst_layout::set_cjk_punct_compression(false);
     let mut world = DocumentRenderWorld::new(source.clone(), m.files);
     let mut warned = typst::compile::<PagedDocument>(&world);
     // 公式转出来的 Typst 源码万一排不了，整份文档的公式都改成显示 LaTeX 原文再排一次，不让整个 PDF 失败
@@ -95,11 +112,7 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> anyhow::Result<Output> 
         let msgs: Vec<String> = errs.iter().map(|e| e.message.to_string()).collect();
         anyhow::anyhow!("typst 排版失败：{}", msgs.join("；"))
     })?;
-    let bytes = typst_pdf::pdf(&document, &typst_pdf::PdfOptions::default()).map_err(|errs| {
-        let msgs: Vec<String> = errs.iter().map(|e| e.message.to_string()).collect();
-        anyhow::anyhow!("生成 PDF 失败：{}", msgs.join("；"))
-    })?;
-    Ok(Output { bytes, warnings })
+    Ok((document, warnings))
 }
 
 /// 图片虚拟文件：路径和内容。
@@ -212,7 +225,8 @@ impl Markup<'_> {
             lits(FONTS),
             lit(&lang_code(lang))
         );
-        let _ = writeln!(o, "#set par(spacing: 0pt)");
+        // 逐行能放就放（first-fit），和 Word 一样；Typst 默认两端对齐时整段算最优断行
+        let _ = writeln!(o, "#set par(spacing: 0pt, linebreaks: \"simple\")");
         let _ = writeln!(o, "#set block(above: 0pt, below: 0pt)");
         let _ = writeln!(o, "#set figure(numbering: none)");
         // 标题的外观全由样式决定，heading 只留着生成书签

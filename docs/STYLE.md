@@ -140,6 +140,24 @@ pdf 和 html 的行高照 Windows 版 Word 排 docx 的规则算（2026-11-18 �
 - 字体按「列表里第一个本机找得到的」算，和 pdf 实际用的一样；docx 只写列表里第一个。本机没有、Word 那台有的字体（比如 Linux 上没有 PingFang SC），pdf 和 Word 会对不上。默认中文字体 PingFang SC 在 Windows 上没有，Word 换成微软雅黑，所以默认字体列表里雅黑排在 Noto、思源前面。
 - document-render 写的 docx 不带文档网格（`w:docGrid`），所以不做网格对齐。parse 读到带网格的 Word 文档时给警告。
 
+### 中文断行
+
+docx 和 pdf 都照 Word 默认设置断行（2026-11-22 和 Windows Word 2024 比过）：
+
+- 逐行排：一行能放几个字就放几个，放不下的挪到下一行，不回头改前面的行。
+- 标点不压缩：「，。、」「」（）这些全角标点都占一个字宽。两个标点挨着（如「。」」「），」）、在行首、在行尾，都不挤成半个字。
+- 标点不悬挂：行尾的标点放不下时不挂到版心外面，按避头尾把前一个字带到下一行。
+
+各格式的做法：
+
+- docx：settings.xml 写 `w:characterSpacingControl w:val="doNotCompress"`，就是 Word 里字符间距控制选「不压缩」；docDefaults 的段落属性写 `w:overflowPunct w:val="0"`，关掉「允许标点溢出边界」。不写 `w:topLinePunct`，Word 默认就不压行首标点。
+- pdf：Typst 设 `par(linebreaks: "simple")`。Typst 0.15.1 没有关标点挤压的参数，所以 document-render 带了一份打过补丁的 typst-layout（`vendor/typst-layout`，改了哪几处见里面的 `PATCH.md`），排版前把挤压关掉。
+- html：交给浏览器，不保证和 Word 一样。
+
+代价：pdf 两端对齐时不再整段一起挑断点，标点也不能挤，字距可能不如以前匀，有的行会拉得稀一些。Word 也是这样。
+
+还对不上的：数字、英文字母挨着中文或标点的行，pdf 和 Word 偶尔差一个字，像是两边中西文间距在行尾、标点旁的处理不一样，规则没查清。
+
 ## 四、边框（对应 w:pBdr、w:tblBorders、w:tcBorders、a:ln、xlsx border）
 
 一条边写成对象，也能用简写字符串 `"1pt solid #CCCCCC"`：
