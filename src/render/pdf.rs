@@ -280,9 +280,7 @@ impl Markup<'_> {
                 bs.merge(&n.part("body"));
                 let kids = {
                     let saved = std::mem::take(&mut self.out);
-                    for c in &n.children {
-                        self.node(c, &bs);
-                    }
+                    self.kids(&n.children, &bs);
                     std::mem::replace(&mut self.out, saved)
                 };
                 body.push_str(&self.scope_src(kids, &bs, s, &n.id));
@@ -499,10 +497,44 @@ impl Markup<'_> {
 
     fn children_src(&mut self, n: &Node) -> String {
         let saved = std::mem::take(&mut self.out);
-        for c in &n.children {
-            self.node(c, &n.style);
-        }
+        self.kids(&n.children, &n.style);
         std::mem::replace(&mut self.out, saved)
+    }
+
+    /// 排一串兄弟元素；边框设置相同的相邻段落像 Word 那样合成一个框（见 common::pbdr_groups）。
+    fn kids(&mut self, kids: &[Node], parent: &Style) {
+        let groups = common::pbdr_groups(kids);
+        let mut i = 0;
+        while i < kids.len() {
+            match groups.iter().find(|g| g.start == i) {
+                Some(g) => {
+                    self.pbdr_group(&kids[g.clone()], parent);
+                    i = g.end;
+                }
+                None => {
+                    self.node(&kids[i], parent);
+                    i += 1;
+                }
+            }
+        }
+    }
+
+    /// 一组合框段落：外面一个只画边框的块，里面各段去掉边框、段前段后，按 Word 的规则留间距，
+    /// 段与段之间画上面那段的 borderBetween。
+    fn pbdr_group(&mut self, kids: &[Node], parent: &Style) {
+        let g = common::pbdr_group(kids);
+        let saved = std::mem::take(&mut self.out);
+        for (i, (k, ms)) in kids.iter().zip(&g.members).enumerate() {
+            let mut m = k.clone();
+            m.style = ms.clone();
+            self.node(&m, parent);
+            if let Some(Some(b)) = g.lines.get(i) {
+                self.out.push_str(&between_line(b));
+            }
+        }
+        let body = std::mem::replace(&mut self.out, saved);
+        let src = self.block_src(body, &g.outer, parent, &kids[0].id);
+        self.out.push_str(&src);
     }
 
     fn block(&mut self, body: String, s: &Style, parent: &Style, id: &str) {
@@ -612,7 +644,6 @@ impl Markup<'_> {
             );
         }
         for (f, on) in [
-            ("borderBetween", s.border_between.is_some()),
             ("borderDiagonal", s.border_diagonal.is_some()),
             ("contextualSpacing", s.contextual_spacing == Some(true)),
             ("wrap: false", s.wrap == Some(Wrap::Text(false))),
@@ -1374,6 +1405,34 @@ fn stroke(b: Option<&Border>, side: Edge) -> String {
                 b.width
             )
         }
+    }
+}
+
+/// 合框段落之间的线（borderBetween）：占线宽那么高、和框里沿一样宽的一条。
+/// 实线直接填色；双线、三线这类拆成几条实线；虚线、点线用 line；波浪线这类图案线退成实线。
+fn between_line(b: &Border) -> String {
+    let w = b.width;
+    let open =
+        format!("#block(width: 100%, height: {w}pt, above: 0pt, below: 0pt, breakable: false");
+    match (common::border_tile(b, Edge::Bottom), b.style) {
+        (Some(t), _) if !t.stripes.is_empty() => {
+            let rects: String = t
+                .stripes
+                .iter()
+                .map(|(off, th, c)| {
+                    format!(
+                        "#place(top + left, dy: {off:.3}pt, rect(width: 100%, height: {th:.3}pt, fill: rgb(\"{c}\"), stroke: none))"
+                    )
+                })
+                .collect();
+            format!("{open})[{rects}]\n")
+        }
+        (None, BorderStyle::Dashed | BorderStyle::Dotted) => format!(
+            "{open})[#place(top + left, dy: {}pt, line(length: 100%, stroke: {}))]\n",
+            w / 2.0,
+            stroke(Some(b), Edge::Bottom)
+        ),
+        _ => format!("{open}, fill: {})\n", color(&b.color)),
     }
 }
 

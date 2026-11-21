@@ -1,0 +1,58 @@
+{
+  "version": "0.1",
+  "meta": { "title": "相邻段落合成一个框", "lang": "zh-CN" },
+  "styles": {
+    "box": { "border": "1pt solid #1A73E8", "padding": 6, "spaceAfter": 6 },
+    "lined": { "borderBetween": "0.5pt dashed #1A73E8" },
+    "blue": { "background": "#E8F0FE" },
+    "yellow": { "background": "#FEF7E0" }
+  },
+  "root": "doc",
+  "elements": {
+    "doc": {
+      "type": "Document",
+      "children": [
+        "h", "intro",
+        "h1", "a1", "a2", "a3",
+        "h2", "b1", "b2", "b3",
+        "h3", "c1", "c2",
+        "h4", "q1", "q2",
+        "h5", "d1", "d2", "after",
+        "h6", "e1", "e2", "e3"
+      ]
+    },
+    "h": { "type": "Heading", "props": { "level": 1, "text": "相邻段落合成一个框" } },
+    "intro": {
+      "type": "Text",
+      "props": { "text": "Word 把挨着的、四条边和左右缩进都一样的几段画成一个框：上边只在第一段上面，下边只在最后一段下面，段与段之间画上面那段的 borderBetween。pdf、html 照这个规则画。" }
+    },
+
+    "h1": { "type": "Heading", "props": { "level": 2, "text": "三段一个框，段间画虚线" } },
+    "a1": { "type": "Text", "props": { "text": "第一段。三段的边框、内边距一样，合成一个框。" }, "style": ["box", "lined", "blue"] },
+    "a2": { "type": "Text", "props": { "text": "第二段换了底色，还在同一个框里；底色铺到下一条线为止。" }, "style": ["box", "lined", "yellow"] },
+    "a3": { "type": "Text", "props": { "text": "第三段是最后一段，下边框画在它下面。它的 borderBetween 用不上。" }, "style": ["box", "lined", "blue"] },
+
+    "h2": { "type": "Heading", "props": { "level": 2, "text": "没写 borderBetween：段与段之间不画线" } },
+    "b1": { "type": "Text", "props": { "text": "第一段，段后 6pt。" }, "style": "box" },
+    "b2": { "type": "Text", "props": { "text": "第二段，段前 12pt：两段之间空段前段后里大的那个，也就是 12pt。" }, "style": ["box", { "spaceBefore": 12 }] },
+    "b3": { "type": "Text", "props": { "text": "第三段左缩进 2em，和上面不一样，自己一个框。" }, "style": ["box", { "marginLeft": "2em" }] },
+
+    "h3": { "type": "Heading", "props": { "level": 2, "text": "提示框" } },
+    "c1": { "type": "Callout", "props": { "text": "两个提示框挨着，Word 里是一个框。" } },
+    "c2": { "type": "Callout", "props": { "text": "第二个提示框接在里面，中间没有线。" } },
+
+    "h4": { "type": "Heading", "props": { "level": 2, "text": "引用：左边一条线连起来" } },
+    "q1": { "type": "Quote", "props": { "text": "第一段引用。" } },
+    "q2": { "type": "Quote", "props": { "text": "第二段引用，左边的线和上面连着。" } },
+
+    "h5": { "type": "Heading", "props": { "level": 2, "text": "分割线：两条挨着只剩一条" } },
+    "d1": { "type": "Divider" },
+    "d2": { "type": "Divider" },
+    "after": { "type": "Text", "props": { "text": "上面两条 Divider 只有下边框，合框后只画最后一条的下边，Word 里也是一条。" } },
+
+    "h6": { "type": "Heading", "props": { "level": 2, "text": "中间夹着别的就断开" } },
+    "e1": { "type": "Text", "props": { "text": "这一段有边框。" }, "style": "box" },
+    "e2": { "type": "Text", "props": { "text": "这一段没有边框，把上下隔开。" } },
+    "e3": { "type": "Text", "props": { "text": "这一段又有边框，自己一个框。" }, "style": "box" }
+  }
+}

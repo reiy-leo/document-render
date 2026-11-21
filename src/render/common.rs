@@ -975,3 +975,174 @@ fn mix_white(c: &crate::style::Color, t: f32) -> String {
     };
     format!("#{:02x}{:02x}{:02x}", ch(0), ch(2), ch(4))
 }
+
+// ---------- 段落边框合框 ----------
+
+/// 相邻几段边框设置相同的段落，Word 画成一个框（2026-11-21 在 Windows Word 2024 上实测）：
+/// 上边只画在第一段上面，下边只画在最后一段下面，左右边连成一条；段与段之间画上面那段的
+/// borderBetween，没写就不画线。pdf、html 照这个规则分组，docx 交给 Word 自己合。
+///
+/// 合不合只看两样：四条边（线型、粗细、颜色、内边距）一样，左右缩进一样。
+/// 段前段后、底色、对齐、首行缩进、borderBetween、段落样式不一样都照样合；
+/// 中间夹着表格、列表、没边框的段落（空段落也算）就断开。
+pub(crate) fn pbdr_key(n: &Node) -> Option<String> {
+    use crate::components::Component as C;
+    // docx 里写成一个带 w:pBdr 的段落的组件；编号标题的缩进在编号定义里，不参与
+    let boxed = match &n.component {
+        C::Quote(_) | C::Callout(_) => true,
+        C::Text(_) | C::Divider(_) | C::Code(_) | C::Math(_) => false,
+        C::Heading(h) => {
+            if h.number.is_some() {
+                return None;
+            }
+            false
+        }
+        _ => return None,
+    };
+    let s = &n.style;
+    let live = |b: Option<&Border>| b.filter(|b| !b.is_none()).cloned();
+    let sides: Vec<Option<Border>> = Edge::ALL.iter().map(|e| live(s.border_side(*e))).collect();
+    if sides.iter().all(Option::is_none) && live(s.border_between.as_ref()).is_none() {
+        return None;
+    }
+    let fs = s.size_pt();
+    let pt = |l: Option<Len>| l.map_or(0.0, |x| x.pt(fs, 0.0));
+    let mut key = String::new();
+    for (e, b) in Edge::ALL.iter().zip(&sides) {
+        match b {
+            // docx 里线宽是 1/8 pt、内边距（w:space）是整数 pt
+            Some(b) => key.push_str(&format!(
+                "{:?}/{}/{}/{};",
+                b.style,
+                (b.width * 8.0).round(),
+                s.padding_side(*e).unwrap_or(0.0).round(),
+                b.color.css()
+            )),
+            None => key.push_str("-;"),
+        }
+    }
+    // 左右缩进按 docx 写出来的 w:ind 比（Quote、Callout 的缩进加上了线宽和内边距，Word 的左缩进含悬挂量）
+    let mut left = pt(s.margin_left) + pt(s.hanging_indent);
+    let mut right = pt(s.margin_right);
+    if boxed {
+        for (i, e, m) in [(3, Edge::Left, &mut left), (1, Edge::Right, &mut right)] {
+            if let Some(b) = sides[i].as_ref().filter(|b| b.width > 0.0) {
+                *m += s.padding_side(e).unwrap_or(0.0) + b.width;
+            }
+        }
+    }
+    key.push_str(&format!(
+        "{}|{}",
+        (left * 20.0).round(),
+        (right * 20.0).round()
+    ));
+    Some(key)
+}
+
+/// children 里要合成一个框的段落：每组是 [起, 止) 区间，至少两段。
+pub(crate) fn pbdr_groups(kids: &[Node]) -> Vec<std::ops::Range<usize>> {
+    let keys: Vec<Option<String>> = kids.iter().map(pbdr_key).collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < kids.len() {
+        let mut j = i + 1;
+        if keys[i].is_some() {
+            while j < kids.len() && keys[j] == keys[i] {
+                j += 1;
+            }
+        }
+        if j - i >= 2 {
+            out.push(i..j);
+        }
+        i = j;
+    }
+    out
+}
+
+/// 一组合框段落怎么画。
+pub(crate) struct PbdrGroup {
+    /// 外框：四条边、左右缩进、第一段的段前和段前分页、最后一段的段后和与下段同页。没有内边距
+    pub outer: Style,
+    /// 各段改过的样式：去掉边框、左右缩进、段前段后，左右内边距是框的内边距，
+    /// 上下内边距是这一段在框里占的距离，所以底色能连成一片
+    pub members: Vec<Style>,
+    /// 第 i 段和第 i+1 段之间的线：上面那段的 borderBetween
+    pub lines: Vec<Option<Border>>,
+}
+
+/// 按 Word 的规则排一组合框段落（实测见 docs/STYLE.md 第四节「相邻段落合成一个框」）：
+/// - 框的上下内边距只在第一段上面、最后一段下面；第一段的段前、最后一段的段后在框外。
+/// - 段与段之间空段前段后里大的那个：上面那段的段后归它自己，线（有的话）画在下面，
+///   下一段段前比上一段段后多出来的部分归下一段。
+/// - 每段的底色铺满自己那一块，左右铺到边框里沿，所以底色连成一片。
+pub(crate) fn pbdr_group(kids: &[Node]) -> PbdrGroup {
+    let first = &kids[0].style;
+    let last = &kids[kids.len() - 1].style;
+    let pt = |s: &Style, l: Option<Len>| l.map_or(0.0, |x| x.pt(s.size_pt(), 0.0));
+    let live = |b: Option<&Border>| b.filter(|b| !b.is_none()).cloned();
+    let mut outer = Style {
+        border_top: live(first.border_side(Edge::Top)),
+        border_right: live(first.border_side(Edge::Right)),
+        border_bottom: live(first.border_side(Edge::Bottom)),
+        border_left: live(first.border_side(Edge::Left)),
+        space_before: Some(Len::Pt(pt(first, first.space_before))),
+        space_after: Some(Len::Pt(pt(last, last.space_after))),
+        page_break_before: first.page_break_before,
+        keep_with_next: last.keep_with_next,
+        ..Style::default()
+    };
+    if first.margin_left.is_some() {
+        outer.margin_left = Some(Len::Pt(pt(first, first.margin_left)));
+    }
+    if first.margin_right.is_some() {
+        outer.margin_right = Some(Len::Pt(pt(first, first.margin_right)));
+    }
+    let pad = |e: Edge| first.padding_side(e).unwrap_or(0.0);
+    let (pad_l, pad_r) = (pad(Edge::Left), pad(Edge::Right));
+    let lines: Vec<Option<Border>> = kids[..kids.len() - 1]
+        .iter()
+        .map(|k| live(k.style.border_between.as_ref()))
+        .collect();
+    let n = kids.len();
+    let mut tops = vec![0.0f32; n];
+    let mut bottoms = vec![0.0f32; n];
+    tops[0] = pad(Edge::Top);
+    bottoms[n - 1] = last.padding_side(Edge::Bottom).unwrap_or(0.0);
+    for i in 0..n - 1 {
+        let (a, b) = (&kids[i].style, &kids[i + 1].style);
+        let after = pt(a, a.space_after);
+        let before = pt(b, b.space_before);
+        // 有没有线都一样：上一段的段后归上面那段（线画在它下面），段前比段后多出来的归下面那段
+        bottoms[i] = after;
+        tops[i + 1] = (before - after).max(0.0);
+    }
+    let members = kids
+        .iter()
+        .enumerate()
+        .map(|(i, k)| {
+            let mut s = k.style.clone();
+            s.border = None;
+            s.border_top = None;
+            s.border_right = None;
+            s.border_bottom = None;
+            s.border_left = None;
+            s.border_between = None;
+            s.margin_left = None;
+            s.margin_right = None;
+            s.page_break_before = None;
+            s.padding = None;
+            s.padding_top = Some(Len::Pt(tops[i]));
+            s.padding_bottom = Some(Len::Pt(bottoms[i]));
+            s.padding_left = Some(Len::Pt(pad_l));
+            s.padding_right = Some(Len::Pt(pad_r));
+            s.space_before = Some(Len::Pt(0.0));
+            s.space_after = Some(Len::Pt(0.0));
+            s
+        })
+        .collect();
+    PbdrGroup {
+        outer,
+        members,
+        lines,
+    }
+}

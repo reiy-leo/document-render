@@ -348,9 +348,7 @@ impl Html<'_> {
                     bs.merge(&body);
                     let a = self.attr(&bs, Some(&n.style), &n.id, Ctx::Block);
                     let _ = writeln!(self.out, "<div{a}>");
-                    for c in &n.children {
-                        self.node(c, Some(&bs));
-                    }
+                    self.kids(&n.children, &bs);
                     self.out.push_str("</div>\n");
                 }
                 self.out.push_str("</section>\n");
@@ -581,9 +579,50 @@ impl Html<'_> {
     }
 
     fn children(&mut self, n: &Node) {
-        for c in &n.children {
-            self.node(c, Some(&n.style));
+        self.kids(&n.children, &n.style);
+    }
+
+    /// 排一串兄弟元素；边框设置相同的相邻段落像 Word 那样合成一个框（见 common::pbdr_groups）。
+    fn kids(&mut self, kids: &[Node], parent: &Style) {
+        let groups = common::pbdr_groups(kids);
+        let mut i = 0;
+        while i < kids.len() {
+            match groups.iter().find(|g| g.start == i) {
+                Some(g) => {
+                    self.pbdr_group(&kids[g.clone()], parent);
+                    i = g.end;
+                }
+                None => {
+                    self.node(&kids[i], Some(parent));
+                    i += 1;
+                }
+            }
         }
+    }
+
+    /// 一组合框段落：外面一个只画边框的 div，里面各段去掉边框、段前段后，按 Word 的规则留间距，
+    /// 段与段之间画上面那段的 borderBetween。
+    fn pbdr_group(&mut self, kids: &[Node], parent: &Style) {
+        let g = common::pbdr_group(kids);
+        let a = self.attr(&g.outer, Some(parent), &kids[0].id, Ctx::Block);
+        let _ = writeln!(self.out, "<div class=\"document-render-pbdr\"{a}>");
+        for (i, (k, ms)) in kids.iter().zip(&g.members).enumerate() {
+            let mut m = k.clone();
+            m.style = ms.clone();
+            self.node(&m, Some(parent));
+            if let Some(Some(b)) = g.lines.get(i) {
+                let line = Style {
+                    border_top: Some(b.clone()),
+                    ..Style::default()
+                };
+                let a = self.attr(&line, Some(parent), &k.id, Ctx::Block);
+                let _ = writeln!(
+                    self.out,
+                    "<div class=\"document-render-pbdr-between\"{a}></div>"
+                );
+            }
+        }
+        self.out.push_str("</div>\n");
     }
 
     /// ` style="..."`，没有内容时是空串。
@@ -1444,9 +1483,6 @@ impl Html<'_> {
         }
         if let Some(Wrap::Text(false)) = s.wrap {
             o.push_str("white-space:nowrap;");
-        }
-        if s.border_between.is_some() {
-            self.warn.unsupported(FORMAT, "borderBetween", id);
         }
         if s.border_diagonal.is_some() {
             self.warn.unsupported(FORMAT, "borderDiagonal", id);

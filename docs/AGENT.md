@@ -576,7 +576,7 @@ run 对象字段（多写会报错）：
 |---|---|---|
 | `border` | 边框 | 四边 |
 | `borderTop` `borderRight` `borderBottom` `borderLeft` | 边框 | 单边，覆盖 `border` |
-| `borderBetween` | 边框 | 相邻同样式段落之间的线 |
+| `borderBetween` | 边框 | 合成一个框的相邻段落之间的线（画上面那段的） |
 | `borderInsideH` `borderInsideV` | 边框 | 表格内部横线、竖线 |
 | `borderDiagonal` | 边框 | 单元格斜线 |
 | `background` | 背景 | |
@@ -586,6 +586,8 @@ run 对象字段（多写会报错）：
 | `verticalAlign` | `top` `middle` `bottom` | 格子内竖直对齐 |
 | `textRotation` | `0` `90` `270` | 文字方向（格子） |
 | `radius` | 长度 | 圆角 |
+
+相邻段落合成一个框：挨着的段落（Text、Heading、Quote、Callout、Divider、Code、Math）四条边（线型、粗细、颜色、内边距）和左右缩进都一样时，Word 画成一个框，pdf、html 也一样：上边只在第一段上面，下边只在最后一段下面，段与段之间画上面那段的 `borderBetween`，没写就不画线。段前段后、底色、对齐不同不影响合框；想分开就在中间放一段不带边框的文字，或让边框、缩进有一点不同。两个挨着的 Divider 只剩一条线。
 
 ### 4.5 图片位置（写在 Image 的 `style` 上）
 
@@ -994,6 +996,7 @@ prop `type`：`string`（默认）`number` `integer` `boolean` `array` `object` 
 | 列表项第二段写成下一个 `items` 项，或写成列表后面的 Text | 多出一个编号，或缩进回到最左边 | 写进那一项的 `children` |
 | 项的 `children` 里放 List、Heading | 报错 | 子列表写 `items`；标题放到列表外面 |
 | 二级的 `listMarkerFormat` 写成 `"%1."` | 二级每项都显示一级的编号（`%1` 是第一级） | 写 `"%2."` 或 `"%1.%2"` |
+| 想要几段各自一个框，连着写了几段同样边框的 Text | Word、pdf、html 都合成一个框 | 中间隔一段没边框的文字，或者让边框、缩进不一样 |
 | 长度写 `"2字符"`、`"10 pt"` 以外的怪单位 | 报错 | 单位只认 `pt mm cm in px em line %` |
 | `listStyleType: "roman"` | 报错；而 `"abc"`（≤3 字符）会被当成符号 | `"lower-roman"` |
 | 顶层多写 `title`、`page` | 报错 | 放进 `meta`、`meta.page` |

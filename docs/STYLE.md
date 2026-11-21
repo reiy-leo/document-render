@@ -149,12 +149,12 @@ pdf 和 html 的行高照 Windows 版 Word 排 docx 的规则算（2026-11-18 �
 }
 ```
 
-- `borderBetween`：段落之间的线，w:pBdr between
+- `borderBetween`：合成一个框的相邻段落之间的线，w:pBdr between（见下面「相邻段落合成一个框」）
 
 | 字段 | 用在哪 | Word | PPT | Excel | HTML | PDF |
 |---|---|---|---|---|---|---|
 | `border` / `borderTop` / `borderRight` / `borderBottom` / `borderLeft` | 段落、单元格、表格、文本框 | w:top … w:start、w:end | 形状只有一条 a:ln，四边不能分开 | left right top bottom | border-* | stroke |
-| `borderBetween` | 相邻同样式段落之间 | w:pBdr between | — | — | — | — |
+| `borderBetween` | 合框段落之间 | w:pBdr between | — | — | 两段之间一个 div 的 border-top | 两段之间一条线 |
 | `borderInsideH` / `borderInsideV` | 表格内部横线、竖线 | w:tblBorders insideH / insideV | a:tcPr 的 lnB 等逐格写 | 逐格写 | 逐格写 | table stroke |
 | `borderDiagonal` | 单元格斜线 | w:tl2br / w:tr2bl | a:lnTlToBr | diagonal | — | — |
 
@@ -196,6 +196,28 @@ pdf 和 html 的行高照 Windows 版 Word 排 docx 的规则算（2026-11-18 �
 - Markdown：没有边框，线型直接忽略。
 
 Word 的线宽只能在 0.25pt 到 12pt 之间（sz 2–96），Excel 只有四档，换算时就近取。
+
+### 相邻段落合成一个框
+
+Word 会把挨着的、边框设置相同的段落画成一个框（Rei 2026-11-21 定「按一个框来做」，以 Word 为准）。docx 每段照写 w:pBdr，Word 打开时自己合；pdf 和 html 按下面的规则分组，画成同样的一个框。Markdown 没有边框，不管。
+
+2026-11-21 在 Windows Word 2024（16.0.17932）上实测，合不合只看两样：
+
+- 四条边一样：线型、粗细、颜色、内边距（w:space）都相同。一边有一边没有也算不同。
+- 左右缩进一样。Word 的左缩进含悬挂量；Quote、Callout 在 docx 里的缩进加了线宽和内边距，所以它们和写了同样边框的 Text 合不到一起。
+
+这些不同都照样合：段前段后、底色、对齐、首行缩进、段落样式、字号、`borderBetween`。只写了 `borderBetween`、四边都没写的段落也会合。中间夹着表格、列表、没边框的段落（空段落也算）就断开；有边框的空段落不断开。参与合框的组件是 docx 里写成一个段落的那些：Text、Heading（开了编号的标题除外）、Quote、Callout、Divider、Code、Math。
+
+合成以后怎么画（实测值，pdf、html 照着排）：
+
+- 上边框只画在第一段上面，下边框只画在最后一段下面，左右边框连成一条。上下内边距只在框的顶上和底下各留一次，段与段之间没有。
+- 第一段的段前、最后一段的段后在框外。
+- 段与段之间空段前段后里大的那个（Word 不把两个加起来）。上一段的段后算上一段的，下一段段前比它多出来的部分算下一段的。
+- 段与段之间画上面那段的 `borderBetween`，没写就不画。线画在上一段的段后下面，也就是两块的分界上。（Word 的 between 线自己也有 w:space，docx 里写的是 0，所以这里不用管。）
+- 底色各段铺各段的那一块，左右铺到边框里沿，上下按上面的分法铺满，所以底色连成一片，中间不露白。
+- 两条挨着的 Divider 只剩一条线（只画最后一条的下边），Word 里也是这样。
+
+没做的：只有左边框、没有上下边框也没有底色时，Word 的竖线会把第一段的段前、最后一段的段后也包进去（底色在的时候又不包），pdf、html 的竖线只到框的上下沿。跨页时 pdf 每页各画一圈完整的框，没按 Word 的样子处理。列表项里的段落、列表项 children 里的段落不参与分组。
 
 ## 五、背景（对应 w:shd、a:solidFill / a:gradFill / a:pattFill、xlsx fill）
 

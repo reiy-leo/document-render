@@ -72,7 +72,7 @@ document-render 把一份 JSON 文档渲染成 docx、pdf、html，也能出 Mar
 
 ## 各格式的差别
 
-同一份 JSON 在三种格式里尽量长得一样。docx 有这些不同：
+同一份 JSON 在三种格式里尽量长得一样。挨着的、边框设置相同的段落，三种格式都按 Word 的规则画成一个框，段间画 `borderBetween`（规则见 STYLE.md 第四节「相邻段落合成一个框」）。docx 有这些不同：
 
 - 图片只收 png、jpeg、gif、webp。SVG 和远程图片放不进去，改成显示 alt 文字，并给警告。
 - `padding` 只在有 `border` 时生效，用作边框和文字的间距。
