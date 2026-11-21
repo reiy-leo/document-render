@@ -264,7 +264,7 @@
     "wide": {
       "type": "Section",
       "props": {
-        "landscape": true,
+        "orientation": "landscape",
         "margin": "15mm",
         "columns": {
           "count": 2,

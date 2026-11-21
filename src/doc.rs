@@ -62,8 +62,12 @@ pub struct Page {
     /// A4、A5、Letter 等，或 { width, height }
     #[serde(default = "default_size")]
     pub size: PageSize,
+    /// 方向：portrait（纵向，默认）或 landscape（横向）。横向时宽高互换
     #[serde(default)]
-    pub landscape: bool,
+    pub orientation: Option<Orientation>,
+    /// 旧写法，`true` 等于 `orientation: "landscape"`；alpha.4 及以前的文档还在用
+    #[serde(default)]
+    pub landscape: Option<bool>,
     #[serde(default = "default_margin")]
     pub margin: Len,
     #[serde(default)]
@@ -224,6 +228,63 @@ pub struct SectionLayout {
     pub even_odd: bool,
     /// 本节页码从几重新开始
     pub page_number_start: Option<u32>,
+}
+
+/// 页面方向，对应 Word 的 w:pgSz w:orient。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum Orientation {
+    /// 纵向
+    #[default]
+    Portrait,
+    /// 横向：纸张宽高互换
+    Landscape,
+}
+
+impl<'de> Deserialize<'de> for Orientation {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        let v = Value::deserialize(d)?;
+        match v.as_str() {
+            Some("portrait") => Ok(Orientation::Portrait),
+            Some("landscape") => Ok(Orientation::Landscape),
+            _ => Err(serde::de::Error::custom(format!(
+                "orientation 只认 \"portrait\"（纵向）和 \"landscape\"（横向），写的是 {v}"
+            ))),
+        }
+    }
+}
+
+impl Orientation {
+    pub fn word(self) -> &'static str {
+        match self {
+            Orientation::Portrait => "portrait",
+            Orientation::Landscape => "landscape",
+        }
+    }
+
+    /// `orientation` 和旧写法 `landscape` 合起来：两个都写又对不上时报错，`what` 用在报错里。
+    pub fn resolve(
+        o: Option<Orientation>,
+        legacy: Option<bool>,
+        what: &str,
+    ) -> Result<Option<Orientation>> {
+        let l = legacy.map(|b| {
+            if b {
+                Orientation::Landscape
+            } else {
+                Orientation::Portrait
+            }
+        });
+        match (o, l) {
+            (Some(a), Some(b)) if a != b => bail!(
+                "{what}：orientation 写的是 `{}`，landscape 写的是 `{}`，两个对不上（landscape 是旧写法，只写 orientation 就行）",
+                a.word(),
+                legacy.unwrap_or_default()
+            ),
+            (Some(a), _) => Ok(Some(a)),
+            (None, b) => Ok(b),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -391,7 +452,8 @@ impl Default for Page {
     fn default() -> Self {
         Page {
             size: default_size(),
-            landscape: false,
+            orientation: None,
+            landscape: None,
             margin: default_margin(),
             margin_top: None,
             margin_right: None,
@@ -410,7 +472,7 @@ impl Default for Page {
 }
 
 impl Page {
-    /// 宽高，pt，已按横向翻转。纸张名不认识时给警告并按 A4。
+    /// 宽高，pt，已按方向摆好。纸张名不认识时给警告并按 A4。
     pub fn dims_pt(&self, warnings: &mut Vec<String>) -> (f32, f32) {
         let (w, h) = match &self.size {
             PageSize::Named(n) => units::page_size_pt(n).unwrap_or_else(|| {
@@ -419,7 +481,31 @@ impl Page {
             }),
             PageSize::Custom { width, height } => (width.abs_pt(), height.abs_pt()),
         };
-        if self.landscape { (h, w) } else { (w, h) }
+        // 写了方向就按方向摆：横向长边做宽，纵向长边做高。
+        // 没写方向时按 size 写的宽高，不转（自定义尺寸写成宽大于高就是横的）
+        let (short, long) = if w <= h { (w, h) } else { (h, w) };
+        match self.orientation_set() {
+            Some(Orientation::Landscape) => (long, short),
+            Some(Orientation::Portrait) => (short, long),
+            None => (w, h),
+        }
+    }
+
+    /// 写明的方向（`orientation` 优先，再看旧写法 `landscape`），都没写是 None。
+    pub fn orientation_set(&self) -> Option<Orientation> {
+        self.orientation.or(self.landscape.map(|b| {
+            if b {
+                Orientation::Landscape
+            } else {
+                Orientation::Portrait
+            }
+        }))
+    }
+
+    /// 排出来是不是横的（宽大于高）。docx 的 w:orient 按它写。
+    pub fn is_landscape(&self) -> bool {
+        let (w, h) = self.dims_pt(&mut Vec::new());
+        w > h
     }
 
     /// 上右下左页边距，pt。
@@ -447,7 +533,12 @@ impl Page {
         macro_rules! set {
             ($($f:ident),*) => { $( if let Some(v) = &o.$f { self.$f = v.clone().into(); } )* };
         }
-        set!(size, landscape, margin);
+        set!(size, margin);
+        // 两个都写且矛盾的情况建树前已经报错，这里只取结果
+        if let Ok(Some(o)) = Orientation::resolve(o.orientation, o.landscape, "") {
+            self.orientation = Some(o);
+            self.landscape = None;
+        }
         macro_rules! opt {
             ($($f:ident),*) => { $( if o.$f.is_some() { self.$f = o.$f.clone(); } )* };
         }
@@ -611,6 +702,18 @@ impl Doc {
                 );
             }
             out.push(self.implicit_section(root, loose));
+        }
+
+        // 方向：orientation 和旧写法 landscape 不能矛盾
+        Orientation::resolve(
+            self.meta.page.orientation,
+            self.meta.page.landscape,
+            "meta.page",
+        )?;
+        for sec in &out {
+            if let Component::Section(p) = &sec.component {
+                Orientation::resolve(p.orientation, p.landscape, &format!("元素 `{}`", sec.id))?;
+            }
         }
 
         // 逐节叠加纸张和页眉页脚设置

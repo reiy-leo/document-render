@@ -348,7 +348,7 @@ run 里写 `image` 就是行内图片，格子、段落、页眉页脚里都能�
 | 字段 | 值 | Word | PPT | Excel | HTML | PDF |
 |---|---|---|---|---|---|---|
 | `size` | `A4` `Letter` …，或 `{ width, height }` | w:pgSz | p:sldSz | pageSetup paperSize | @page size | page width / height |
-| `landscape` | 布尔 | w:pgSz orient | — | orientation | @page | flipped |
+| `orientation` | `portrait`（默认）`landscape` | w:pgSz orient，w、h 互换 | — | orientation | @page size 宽高互换 | page width / height 互换 |
 | `margin` / `marginTop` … | 长度 | w:pgMar | — | pageMargins | @page margin | margin |
 | `headerDistance` / `footerDistance` | 长度，默认 0.5in | w:pgMar header / footer | — | pageMargins header / footer | 页眉页脚框离纸边的距离（`--paged`） | 页眉页脚框的内边距 |
 | `gutter` | 长度 | w:pgMar gutter | — | — | — | binding |
@@ -381,6 +381,26 @@ root 下面不写 `Section` 也行，整份文档就是一节，用 `meta.page` 
   "foot":  { "type": "Text", "props": { "text": ["第 ", { "field": "page" }, " 页，共 ", { "field": "pages" }, " 页"] } }
 }
 ```
+
+### 页面方向
+
+`orientation` 写 `portrait`（纵向）或 `landscape`（横向），`meta.page` 和每个 `Section` 都能写，没写就沿用上一节。横竖可以混排：前后两节纵向，中间一节横向放宽表格，页眉页脚和页码照常接着走。
+
+规则：
+
+- 横向时长边做宽、短边做高，纵向反过来。只写 `orientation` 不写 `size`，纸张不变，只是转过来。
+- 一直没写过 `orientation` 时，按 `size` 写的宽高摆，不转。自定义尺寸写成 `{ "width": "297mm", "height": "210mm" }` 就是横的。
+- 页边距按横过来的纸算：`marginTop` 是横向纸的上边，`marginLeft` 是左边，装订线也还在左边。Word 在界面里切方向时会把四边页边距跟着转一圈，我们不转，写什么就是什么，跟 Word 存在 w:pgMar 里的意思一样。
+- `headerDistance`、`footerDistance` 也按横过来的纸量：页眉离横向纸的上边，页脚离下边。
+- 旧写法 `"landscape": true` 还认，等于 `"orientation": "landscape"`（alpha.4 及以前的文档在用）。两个都写又对不上时报错。`orientation` 写别的值也报错。
+
+各格式：
+
+- docx：每节的 w:sectPr 各写一个 w:pgSz，横向时 w:w、w:h 互换并写 `w:orient="landscape"`。
+- pdf：每节一条 `set page(width, height)`，宽高已经互换，Typst 从新的一页开始排这一节。
+- html：直接打开时，每节按自己的版心宽度排，横向那节更宽，正文限宽取最宽那节；打印时浏览器只用第一节的纸张。加 `--paged` 时每节是一个具名页面（`@page document-render-sN`，节上写 `page: document-render-sN`），横向节的 size 宽高互换；另外给每节的页挂一个打印用的具名页面，Chrome 打印、存 PDF 时每页按所在节的纸张出。
+- md：没有页面概念，忽略方向。
+- parse：读 w:pgSz 的宽高，宽大于高就是横向，没写 w:orient 也算；高大于宽就是纵向，写了 `w:orient="landscape"` 也不算（Word 按宽高排版）。宽高相等时才看 w:orient。`size` 一律写成纵向的尺寸，横向另写 `orientation`。
 
 ### 页眉页脚
 
@@ -415,7 +435,7 @@ runs 里写 `{ "field": "page" }` 是当前页码，`"pages"` 是全文总页数
 
 - docx：写成 Word 的域（PAGE、NUMPAGES、SECTIONPAGES），Word 打开后自己算。LibreOffice 不认 SECTIONPAGES，只显示 `text` 的值。
 - pdf：Typst 排完版后按上面的规则算好。
-- html：直接打开或打印时没有页眉页脚，页码显示 `text` 的值；加 `--paged` 后由脚本排完版再放页眉页脚、按格式填页码。目录的页码由 Paged.js 自己数，不跟 `pageNumberStart` 和 `pageNumberFormat`。屏幕上每节按自己的纸张显示，但打印时 Paged.js 只用第一节的纸张，横竖混排的文档打出来横向那几页会被裁掉，要打印请用 pdf。
+- html：直接打开或打印时没有页眉页脚，页码显示 `text` 的值；加 `--paged` 后由脚本排完版再放页眉页脚、按格式填页码。目录的页码由 Paged.js 自己数，不跟 `pageNumberStart` 和 `pageNumberFormat`。屏幕上每节按自己的纸张显示；打印时每页按所在节的纸张出（见上面「页面方向」）。
 
 ### 分栏符
 

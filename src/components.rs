@@ -593,7 +593,12 @@ pub struct SlideProps {
 pub struct SectionProps {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<crate::doc::PageSize>,
+    /// 方向：portrait（纵向）或 landscape（横向，宽高互换）；不写沿用上一节
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orientation: Option<crate::doc::Orientation>,
+    /// 旧写法，`true` 等于 `orientation: "landscape"`；不进 schema
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(skip)]
     pub landscape: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub margin: Option<crate::style::Len>,

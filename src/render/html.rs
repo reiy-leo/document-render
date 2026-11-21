@@ -32,6 +32,7 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> Output {
         warn: Warn::default(),
         opts,
         sec_css: String::new(),
+        print_css: String::new(),
         content_width: 0.0,
         root: tree,
         tiles: Vec::new(),
@@ -50,6 +51,15 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> Output {
     let [mt, mr, mb, ml] = page.margins_pt();
     let gutter = page.gutter.map(|g| g.abs_pt()).unwrap_or(0.0);
     r.content_width = w - ml - mr - gutter;
+    // 正文限宽取最宽那一节的版心：横向节比纵向节宽，屏幕上各节再按自己的版心限宽、居中
+    let body_width = tree
+        .children
+        .iter()
+        .filter_map(|c| match &c.component {
+            Component::Section(p) => Some(section_content_width(&p.layout().page)),
+            _ => None,
+        })
+        .fold(r.content_width, f32::max);
     let _ = write!(
         r.out,
         "<!doctype html>\n<html lang=\"{}\">\n<head>\n<meta charset=\"utf-8\">\n\
@@ -69,8 +79,11 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> Output {
          {cols}{}{TILES_MARK}</style>\n{}</head>\n<body>\n",
         esc(title),
         ml + gutter,
-        w - ml - mr - gutter,
-        BASE_CSS,
+        body_width,
+        format_args!(
+            "{BASE_CSS}{}",
+            if opts.paged { "" } else { SCREEN_BREAK_CSS }
+        ),
         if opts.paged { PAGED_CSS } else { "" }
     );
     r.node(tree, None);
@@ -96,11 +109,32 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> Output {
     r.out = r
         .out
         .replacen("/*document-render-sections*/\n", &r.sec_css, 1);
+    if opts.paged && !r.print_css.is_empty() {
+        let css = format!(
+            "<style data-pagedjs-ignore>\n{}</style>\n</head>",
+            r.print_css
+        );
+        r.out = r.out.replacen("</head>", &css, 1);
+    }
     Output {
         bytes: r.out.into_bytes(),
         warnings: r.warn.list,
     }
 }
+
+/// 一节的版心宽度，pt（纸宽减左右页边距和装订线）。
+fn section_content_width(page: &crate::doc::Page) -> f32 {
+    let (w, _) = page.dims_pt(&mut Vec::new());
+    let [_, mr, _, ml] = page.margins_pt();
+    let gutter = page.gutter.map(|g| g.abs_pt()).unwrap_or(0.0);
+    w - ml - mr - gutter
+}
+
+/// 直接打开时屏幕上用虚线标出分页和分节。`--paged` 时不要：Paged.js 改写样式表后
+/// 这两条会落到每一页上，连打印出来的页顶也有虚线。
+const SCREEN_BREAK_CSS: &str = "@media screen { .document-render-pagebreak { border-top: 1px dashed #bbb; margin: 2rem 0; } \
+.document-render-section + .document-render-section { border-top: 1px dashed #bbb; margin-top: 2rem; padding-top: 2rem; } }
+";
 
 const BASE_CSS: &str = "\
 * { box-sizing: border-box; }
@@ -129,8 +163,6 @@ math { font-family: \"STIX Two Math\", \"Cambria Math\", \"Latin Modern Math\", 
 .document-render-section + .document-render-section { break-before: page; }
 .document-render-slide { aspect-ratio: 16 / 9; border: 1px solid #ddd; border-radius: 6px; padding: 2rem 3rem; \
 margin: 1.5rem 0; overflow: hidden; break-inside: avoid; break-after: page; position: relative; }
-@media screen { .document-render-pagebreak { border-top: 1px dashed #bbb; margin: 2rem 0; } \
-.document-render-section + .document-render-section { border-top: 1px dashed #bbb; margin-top: 2rem; padding-top: 2rem; } }
 @media print { body { max-width: none; margin: 0; padding: 0; } .document-render-slide { border: none; } }
 ";
 
@@ -155,16 +187,13 @@ class DocumentRenderRepeatThead extends Paged.Handler {
 }
 Paged.registerHandlers(DocumentRenderRepeatThead);";
 
-/// 按页显示时的屏幕样式：灰底、白纸、阴影；正文不再限宽，屏幕上的分页虚线也不要了。
-/// 带 data-pagedjs-ignore，Paged.js 不去改写它；但 Paged.js 会把原样式表重新插到后面，
-/// 同样优先级会被盖掉，所以去虚线这两条加 !important。
+/// 按页显示时的屏幕样式：灰底、白纸、阴影；正文不再限宽（分页虚线这时根本不输出，见 SCREEN_BREAK_CSS）。
+/// 带 data-pagedjs-ignore，Paged.js 不去改写它。
 const PAGED_CSS: &str = "<style data-pagedjs-ignore>
 @media screen {
   body { max-width: none; margin: 0; padding: 0; background: #e8eaed; }
   .pagedjs_pages { display: flex; flex-direction: column; align-items: center; padding: 24px 0; }
   .pagedjs_page { background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.25); margin-bottom: 24px; }
-  .document-render-pagebreak { border-top: none !important; margin: 0 !important; }
-  .document-render-section + .document-render-section { border-top: none !important; margin-top: 0 !important; padding-top: 0 !important; }
 }
 .pagedjs_pagebox { position: relative; isolation: isolate; }
 .pagedjs_area { position: relative; }
@@ -188,7 +217,7 @@ const PAGED_CSS: &str = "<style data-pagedjs-ignore>
 /// 把对应的 <template> 内容放进页面的边距里，再填好页码域。
 /// 页码按 Word 的规则自己数：每节接着上一节数，写了 data-page-start 就从那个数重新开始；
 /// data-page-fmt 是页码格式（Word 的写法，跟 Rust 里 PageNumberFormat::format 一致）。
-const PAGED_HF: &str = r#"function document-renderNum(n, fmt) {
+const PAGED_HF: &str = r#"function documentRenderNum(n, fmt) {
   if (!fmt || n < 1) return String(n);
   if (fmt === 'lowerRoman' || fmt === 'upperRoman') {
     const t = [[1000,'M'],[900,'CM'],[500,'D'],[400,'CD'],[100,'C'],[90,'XC'],[50,'L'],[40,'XL'],[10,'X'],[9,'IX'],[5,'V'],[4,'IV'],[1,'I']];
@@ -244,7 +273,7 @@ class DocumentRenderHeaders extends Paged.Handler {
       for (const f of root.querySelectorAll('.document-render-field')) {
         const k = f.dataset.field;
         // 跟 Word 一样，只有页码按节的格式显示，总页数和本节页数都是阿拉伯数字
-        f.textContent = k === 'page' ? document-renderNum(x.num, x.sec.fmt) : k === 'pages' ? pages.length : x.sec.count;
+        f.textContent = k === 'page' ? documentRenderNum(x.num, x.sec.fmt) : k === 'pages' ? pages.length : x.sec.count;
       }
     };
     for (const x of info) {
@@ -289,6 +318,8 @@ struct Html<'a> {
     opts: &'a Options,
     /// 各节的 @page 和分栏规则，最后填进 <style>
     sec_css: String,
+    /// --paged 打印时每页按所在节的纸张出纸的规则，放进带 data-pagedjs-ignore 的 <style>
+    print_css: String,
     /// 版心宽度，pt；auto 列和比例列混写时用来分宽度
     content_width: f32,
     /// 整棵树，目录要从里面收标题
@@ -473,15 +504,45 @@ impl Html<'_> {
                 )
             })
             .unwrap_or_default();
+        // 第二节起写明从新的一页开始：Paged.js 不认 `section + section` 里的 break-before，
+        // 换具名页面时也不会自己换页
+        let brk = if i > 0 { " break-before: page;" } else { "" };
         let _ = writeln!(
             self.sec_css,
-            ".document-render-section[data-section=\"{i}\"] {{ page: document-render-s{i};{cols} }}"
+            ".document-render-section[data-section=\"{i}\"] {{ page: document-render-s{i};{brk}{cols} }}"
         );
+        // Paged.js 0.4.3 只把具名页面的尺寸用在版面（pagebox）上，纸（.pagedjs_page）的宽高
+        // 和打印用的 @page 都按第一节，横竖混排时横向页屏幕上被裁、打印也被裁。
+        // 这里按节补上纸的宽高变量，再给每节的页挂一个带尺寸的打印用具名页面。
+        // Paged.js 的无名 @page 插在我们后面，Chrome 里会盖掉具名页面的 size，所以加 !important
+        let _ = writeln!(
+            self.print_css,
+            ".pagedjs_page.pagedjs_named_page.pagedjs_document-render-s{i}_page {{ \
+             --pagedjs-width: {w}pt !important; --pagedjs-height: {h}pt !important; \
+             --pagedjs-width-left: {w}pt !important; --pagedjs-height-left: {h}pt !important; \
+             --pagedjs-width-right: {w}pt !important; --pagedjs-height-right: {h}pt !important; }}\n\
+             @media print {{ @page document-render-print-s{i} {{ size: {w}pt {h}pt !important; margin: 0; }} \
+             .pagedjs_document-render-s{i}_page {{ page: document-render-print-s{i}; }} }}"
+        );
+        // 直接打开时屏幕上每节按自己的版心宽度排（横向节更宽），--paged 时由页面决定宽度
+        let width = w - ml - mr - gutter;
+        if !self.opts.paged {
+            let _ = writeln!(
+                self.sec_css,
+                "@media screen {{ .document-render-section[data-section=\"{i}\"] {{ max-width: {width}pt; margin-inline: auto; }} }}"
+            );
+        }
+        // 表格 auto 列、百分比宽度都按本节的版心算
+        self.content_width = width;
         let mut attrs = format!(
             " data-section=\"{i}\" data-hf=\"{hd} {fd} {} {}\"",
             ml + gutter,
             w - ml - mr - gutter
         );
+        if i > 0 && self.opts.paged {
+            // Paged.js 的 CSS 换页规则落不到节上（节容器被它标成 undisplayed），直接写它认的属性
+            attrs.push_str(" data-break-before=\"page\"");
+        }
         if let Some(x) = lay.page_number_start {
             let _ = write!(attrs, " data-page-start=\"{x}\"");
         }

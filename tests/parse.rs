@@ -312,7 +312,7 @@ fn sections_headers_and_page_numbers() {
     let text = serde_json::to_string(&parsed.json).unwrap();
     assert!(text.contains(r#""field":"page""#));
     assert!(text.contains(r#""pageNumberStart":1"#));
-    assert!(text.contains(r#""landscape":true"#));
+    assert!(text.contains(r#""orientation":"landscape""#));
     assert!(text.contains(r#""even""#));
     let page = &parsed.json["meta"]["page"];
     assert!(page["header"].is_object() || page["header"].is_string());

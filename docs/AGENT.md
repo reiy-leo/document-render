@@ -332,7 +332,7 @@ run 对象的字段见 3.17。
 | prop | 类型 | 说明 |
 |---|---|---|
 | `size` | `"A3"` `"A4"` `"A5"` `"B5"` `"Letter"` `"Legal"`，或 `{ "width", "height" }` | 纸张 |
-| `landscape` | 布尔 | 横向 |
+| `orientation` | `"portrait"`（纵向）`"landscape"`（横向） | 方向，横向时纸张宽高互换 |
 | `margin` | 长度 | 四边页边距 |
 | `marginTop` `marginRight` `marginBottom` `marginLeft` | 长度 | 单边，覆盖 `margin` |
 | `gutter` | 长度 | 装订线 |
@@ -349,6 +349,34 @@ run 对象的字段见 3.17。
 - 设了 `first`（含 `null`）就开「首页不同」；任何一节设了 `even` 就整份文档开「奇偶页不同」。
 - 在 Section 上写 `"header": null` 清掉从上一节接过来的全部页眉。
 - `first` 也会沿用：封面一节写了 `"first": null`，下一节首页照样空白。下一节要显示，就重写 `first`：`{ "default": "hdr", "first": "hdr" }`。同一个元素可以同时用在 `default` 和 `first`。
+
+方向规则：
+
+- `orientation` 沿用上一节。中间一节写 `"landscape"`，后面要回到纵向就写 `"portrait"`。
+- 横向时长边做宽、短边做高；只写 `orientation` 不写 `size`，纸张还是上一节的。
+- 页边距和页眉页脚距离按横过来的纸算：`marginTop` 就是横向纸的上边，Word 切方向时会把四边转一下，这里不转。
+- 没写过 `orientation` 时按 `size` 写的宽高摆，自定义尺寸写成宽大于高就是横的。
+- 旧写法 `"landscape": true` 还认，等于 `"orientation": "landscape"`；和 `orientation` 一起写又对不上时报错。
+
+宽表格放横向的例子（前后两节纵向，页眉页脚照常）：
+
+<!-- check -->
+```json
+{
+  "meta": { "page": { "size": "A4", "header": "hdr" } },
+  "root": "doc",
+  "elements": {
+    "doc": { "type": "Document", "children": ["s1", "s2", "s3"] },
+    "hdr": { "type": "Text", "props": { "text": "季度报告" } },
+    "s1": { "type": "Section", "children": ["p1"] },
+    "p1": { "type": "Text", "props": { "text": "前言，纵向。" } },
+    "s2": { "type": "Section", "props": { "orientation": "landscape", "margin": "15mm" }, "children": ["t"] },
+    "t": { "type": "Table", "props": { "columns": ["区域", "Q1", "Q2", "Q3", "Q4", "全年"], "rows": [["华东", "1", "2", "3", "4", "10"]] } },
+    "s3": { "type": "Section", "props": { "orientation": "portrait", "margin": "20mm" }, "children": ["p2"] },
+    "p2": { "type": "Text", "props": { "text": "回到纵向。" } }
+  }
+}
+```
 
 root 下面的排法：全不用 Section（整份一节，设置在 `meta.page`）；或者全是 Section；或者开头一段不在 Section 里（算第一节，用 `meta.page`），后面全是 Section。Section 后面不能再跟散的元素。
 
@@ -564,7 +592,7 @@ Table 内置样式：`border: 0.5pt solid #999999`、`cellPadding: 4`、`spaceAf
 | 字段 | 取值 | 默认 |
 |---|---|---|
 | `size` | `A3` `A4` `A5` `B5` `Letter` `Legal`（不分大小写），或 `{ "width": 长度, "height": 长度 }`；不认识的纸张给警告并按 A4 | `A4` |
-| `landscape` | 布尔 | `false` |
+| `orientation` | `"portrait"` `"landscape"`，规则见 3.14 | `"portrait"` |
 | `margin` | 长度 | `20mm` |
 | `marginTop` `marginRight` `marginBottom` `marginLeft` | 长度 | 用 `margin` |
 | `gutter` | 长度 | 无 |
@@ -907,3 +935,5 @@ prop `type`：`string`（默认）`number` `integer` `boolean` `array` `object` 
 | 长度写 `"2字符"`、`"10 pt"` 以外的怪单位 | 报错 | 单位只认 `pt mm cm in px em line %` |
 | `listStyleType: "roman"` | 报错；而 `"abc"`（≤3 字符）会被当成符号 | `"lower-roman"` |
 | 顶层多写 `title`、`page` | 报错 | 放进 `meta`、`meta.page` |
+| 横向一节后面的节没写 `orientation` | 后面也全是横的（方向沿用） | 要回纵向的那节写 `"orientation": "portrait"` |
+| `orientation` 写成 `"Landscape"`、`"horizontal"`、`true` | 报错 | 只认 `"portrait"` `"landscape"` |

@@ -65,7 +65,7 @@ fn html_has_named_pages_and_templates() {
     assert_eq!(count(&x, "<section class=\"document-render-section\""), 3);
     assert!(x.contains("@page document-render-s2 { size: 841.8898pt 595.2756pt;"));
     assert!(x.contains(
-        ".document-render-section[data-section=\"2\"] { page: document-render-s2; column-count: 2;"
+        ".document-render-section[data-section=\"2\"] { page: document-render-s2; break-before: page; column-count: 2;"
     ));
     assert!(x.contains(r#"data-kind="header-first""#));
     assert!(x.contains(r#"data-kind="header-even""#));
@@ -233,7 +233,7 @@ fn html_marks_page_format_and_column_break() {
     )
     .unwrap();
     let p = String::from_utf8(paged.bytes).unwrap();
-    assert!(p.contains("document-renderNum(x.num, x.sec.fmt)"));
+    assert!(p.contains("documentRenderNum(x.num, x.sec.fmt)"));
 }
 
 #[test]

@@ -141,7 +141,7 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> anyhow::Result<Output> 
         let (w, h) = page.dims_pt(&mut Vec::new());
         let size = docx_rs::PageSize::new()
             .size(units::twip(w) as u32, units::twip(h) as u32)
-            .orient(if page.landscape {
+            .orient(if page.is_landscape() {
                 PageOrientationType::Landscape
             } else {
                 PageOrientationType::Portrait

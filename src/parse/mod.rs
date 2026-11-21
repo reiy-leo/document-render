@@ -3318,9 +3318,16 @@ fn renumber(text: &str, min: usize) -> String {
 /// 一节的 meta.page / Section props。
 fn page_json(s: &Sect) -> Map<String, Value> {
     let mut m = Map::new();
+    // 方向看 w:pgSz 的宽高：宽大于高就是横向，没写 w:orient 也算；
+    // 高大于宽就是纵向，w:orient="landscape" 也不算（Word 按宽高排版，orient 只给打印机看）。
+    // 宽高相等时才看 w:orient。size 一律写成纵向（短边做宽）的尺寸
     let (mut w, mut h) = (s.w, s.h);
-    let landscape = s.landscape || w > h + 0.5;
-    if landscape && w > h {
+    let landscape = if (w - h).abs() < 0.5 {
+        s.landscape
+    } else {
+        w > h
+    };
+    if w > h {
         std::mem::swap(&mut w, &mut h);
     }
     let name = ["A3", "A4", "A5", "B5", "Letter", "Legal"]
@@ -3341,7 +3348,7 @@ fn page_json(s: &Sect) -> Map<String, Value> {
         }
     }
     if landscape {
-        m.insert("landscape".into(), json!(true));
+        m.insert("orientation".into(), json!("landscape"));
     }
     let mar = s.margins.map(round2);
     let mut counts: Vec<(f32, usize)> = Vec::new();
@@ -3387,8 +3394,8 @@ fn page_full(s: &Sect) -> Map<String, Value> {
     let mut m = Map::new();
     m.insert("size".into(), p["size"].clone());
     m.insert(
-        "landscape".into(),
-        p.get("landscape").cloned().unwrap_or(json!(false)),
+        "orientation".into(),
+        p.get("orientation").cloned().unwrap_or(json!("portrait")),
     );
     for k in ["marginTop", "marginRight", "marginBottom", "marginLeft"] {
         m.insert(k.into(), p.get(k).cloned().unwrap_or_else(|| main.clone()));
