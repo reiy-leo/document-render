@@ -671,6 +671,27 @@ pub fn cell_borders(
 }
 
 /// 把文字放进另一个样式环境（表格格子、列表项）：每个 run 的样式按新环境重算。
+/// 文字按换行分成几行，每行有没有中日韩文字。Word 逐行按这一行用到的字体算行高，
+/// pdf、html 的格子靠它决定哪几行要撑高。藏起来的、图片、域、公式不算（它们也不产生换行）。
+pub fn line_cjk(t: &Inline, old: &Style, new: &Style) -> Vec<bool> {
+    let mut lines = vec![false];
+    for r in rebase_runs(t, old, new) {
+        if r.computed.hidden == Some(true) || r.image.is_some() || r.field.is_some() || r.is_math()
+        {
+            continue;
+        }
+        for (i, seg) in r.text.split('\n').enumerate() {
+            if i > 0 {
+                lines.push(false);
+            }
+            if super::metrics::has_cjk(seg) {
+                *lines.last_mut().unwrap() = true;
+            }
+        }
+    }
+    lines
+}
+
 pub fn rebase_runs(t: &Inline, old: &Style, new: &Style) -> Vec<Run> {
     t.runs()
         .map(|r| {
@@ -1144,5 +1165,20 @@ pub(crate) fn pbdr_group(kids: &[Node]) -> PbdrGroup {
         outer,
         members,
         lines,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn line_cjk_splits_by_break() {
+        // 建树后文字都是 runs（Plain 也转成了 runs）
+        let t = Inline::Runs(vec![crate::components::RunOrText::Run(Run::plain(
+            "中\nab\n\n文c",
+        ))]);
+        let s = Style::default();
+        assert_eq!(line_cjk(&t, &s, &s), vec![true, false, false, true]);
     }
 }

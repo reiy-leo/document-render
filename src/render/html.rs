@@ -38,6 +38,7 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> Output {
         cjk: false,
         marker_font: None,
         run_cjk: false,
+        line_marks: None,
     };
     let lang = doc.meta.lang.as_deref().unwrap_or("zh-CN");
     let title = doc.meta.title.as_deref().unwrap_or("document-render");
@@ -301,6 +302,8 @@ struct Html<'a> {
     marker_font: Option<(String, f32)>,
     /// 正在写的这段文字（run）里有没有中日韩文字；上标下标的字号偏移看东亚字体还是西文字体
     run_cjk: bool,
+    /// 格子里逐行的行高：每行开头放的撑高标记（有中文的行才有）和当前写到第几行，见 `cell_lines`
+    line_marks: Option<(Vec<Option<String>>, usize)>,
 }
 
 const TILES_MARK: &str = "/*document-render-tiles*/";
@@ -1010,11 +1013,31 @@ impl Html<'_> {
                     .row_height(p, r)
                     .filter(|h| h.exact && sl.row_span == 1)
                     .map(|h| (h.height - vpad).max(0.0));
-                // 行高按整格的样式（字体是继承来的）算
-                if let Some(lh) =
-                    line_height_css(&cs, metrics::has_cjk(&format!("{:?}", sl.text())), None)
-                {
-                    css.push_str(&lh);
+                // 行高按整格的样式（字体是继承来的）算，逐行看这一行有没有中文（见 pdf 的 cell_text）：
+                // 两种行都有时，整格写两种行高里小的那个，每行开头放一个带这一行行高的零宽字符
+                let lines = common::line_cjk(sl.text(), s, &cs);
+                let any = lines.iter().any(|x| *x);
+                if !any || lines.iter().all(|x| *x) {
+                    if let Some(lh) = line_height_css(&cs, any, None) {
+                        css.push_str(&lh);
+                    }
+                } else {
+                    let fs = cs.size_pt();
+                    let h = |cjk| {
+                        metrics::line_box(&metrics::style_line(&cs, cjk, None), cs.line_height, fs)
+                            .height(fs)
+                    };
+                    let (lat, cjk) = (h(false), h(true));
+                    let _ = write!(css, "line-height:{:.3}pt;", lat.min(cjk));
+                    let mark =
+                        |v: f32| format!("<span style=\"line-height:{v:.3}pt\">\u{200B}</span>");
+                    self.line_marks = Some((
+                        lines
+                            .iter()
+                            .map(|c| Some(mark(if *c { cjk } else { lat })))
+                            .collect(),
+                        0,
+                    ));
                 }
                 let borders = common::span_edges(n, &p.look, &g, r, c);
                 for (e, b) in ["top", "right", "bottom", "left"]
@@ -1062,7 +1085,14 @@ impl Html<'_> {
                     }
                     _ => {}
                 }
+                if let Some((marks, _)) = &self.line_marks
+                    && let Some(Some(m)) = marks.first()
+                {
+                    let m = m.clone();
+                    self.out.push_str(&m);
+                }
                 self.inline_in(sl.text(), s, &cs, &n.id);
+                self.line_marks = None;
                 match (exact, justify) {
                     (Some(_), Some(_)) => self.out.push_str("</div></div>"),
                     (Some(_), None) => self.out.push_str("</div>"),
@@ -1250,7 +1280,27 @@ impl Html<'_> {
         {
             let _ = write!(css, "background-color:{};", h.css());
         }
-        let mut text = esc(&r.text).replace('\n', "<br>");
+        let mut text = esc(&r.text);
+        if text.contains('\n') {
+            let mut t = String::new();
+            for (i, line) in text.split('\n').enumerate() {
+                if i > 0 {
+                    t.push_str("<br>");
+                    if let Some((marks, at)) = &mut self.line_marks
+                        && r.field.is_none()
+                        && r.image.is_none()
+                        && !r.is_math()
+                    {
+                        *at += 1;
+                        if let Some(Some(m)) = marks.get(*at) {
+                            t.push_str(m);
+                        }
+                    }
+                }
+                t.push_str(line);
+            }
+            text = t;
+        }
         if let Some(src) = &r.image {
             let mut st = String::new();
             if let Some(w) = r.width {

@@ -154,6 +154,7 @@ fn markup_with<'a>(doc: &Doc, tree: &Node, opts: &'a Options, math_fallback: boo
         math_fallback,
         had_math: false,
         marker_font: None,
+        line_marks: None,
         heading_numbering: common::heading_numbering(tree).cloned(),
     };
     m.preamble(doc);
@@ -186,6 +187,9 @@ struct Markup<'a> {
     marker_font: Option<(String, f32)>,
     /// 标题编号定义（从根 Document 上取）
     heading_numbering: Option<crate::doc::HeadingNumbering>,
+    /// 格子里逐行的行盒：每行开头放的撑高标记（有中文的行才有）和当前排到第几行。
+    /// Word 逐行按这一行的字体算行高，见 `cell_text`
+    line_marks: Option<(Vec<Option<String>>, usize)>,
 }
 
 impl Markup<'_> {
@@ -807,6 +811,49 @@ impl Markup<'_> {
         out
     }
 
+    /// 格子里的文字和它的行盒。Word 逐行按这一行用到的字体算行高：有中文的行算上东亚字体，
+    /// 纯西文的行只算西文字体（2026-11-22 Windows Word 2024 实测）。一格里两种行都有时，
+    /// 每行开头放一个零宽字符，带上这一行该有的行盒（写成 pt，不随 run 的字号变）；
+    /// 整格的行盒取两种行盒逐项小的那个，Typst 取一行里最高的，这一行就是标记的高度。
+    /// 不能拿西文行盒当整格的：最小行高多出来的部分加在西文行的基线上面，和中文行的下沿
+    /// 拼在一起会比 Word 高。返回 (文字, 整格行盒的 `#set text(...)`)。
+    fn cell_text(&mut self, t: &Inline, old: &Style, cs: &Style) -> (String, String) {
+        let lines = common::line_cjk(t, old, cs);
+        let fs = cs.size_pt();
+        let any = lines.iter().any(|x| *x);
+        if !any || lines.iter().all(|x| *x) {
+            let set = format!(
+                "#set text({})",
+                line_edges(cs, cs.line_height, fs, any, None)
+            );
+            return (self.inline_in(t, old, cs), set);
+        }
+        let lb = |cjk| metrics::line_box(&metrics::style_line(cs, cjk, None), cs.line_height, fs);
+        let (lat, cjk) = (lb(false), lb(true));
+        let base = metrics::LineBox {
+            top_em: lat.top_em.min(cjk.top_em),
+            top_pt: lat.top_pt.min(cjk.top_pt),
+            bottom_em: lat.bottom_em.min(cjk.bottom_em),
+            bottom_pt: lat.bottom_pt.min(cjk.bottom_pt),
+        };
+        let mark = |b: metrics::LineBox| {
+            format!(
+                "#text(top-edge: {:.3}pt, bottom-edge: {:.3}pt)[#\"\u{200B}\"]",
+                b.top(fs),
+                -b.bottom(fs)
+            )
+        };
+        let marks: Vec<Option<String>> = lines
+            .iter()
+            .map(|c| Some(mark(if *c { cjk } else { lat })))
+            .collect();
+        let first = marks[0].clone().unwrap_or_default();
+        self.line_marks = Some((marks, 0));
+        let text = self.inline_in(t, old, cs);
+        self.line_marks = None;
+        (first + &text, format!("#set text({})", base.typst()))
+    }
+
     fn run(&mut self, r: &Run, para: &Style) -> String {
         let s = &r.computed;
         if s.hidden == Some(true) {
@@ -850,6 +897,12 @@ impl Markup<'_> {
         {
             if i > 0 {
                 piece.push_str("#linebreak()");
+                if let Some((marks, at)) = &mut self.line_marks {
+                    *at += 1;
+                    if let Some(Some(m)) = marks.get(*at) {
+                        piece.push_str(m);
+                    }
+                }
             }
             if !line.is_empty() {
                 let _ = write!(piece, "#{}", lit(line));
@@ -1126,20 +1179,13 @@ impl Markup<'_> {
                 let part = common::cell_parts(n, &p.look, &g, r, c);
                 let mut cs = s.inherited();
                 cs.merge(&part);
-                let mut text = self.inline_in(sl.text(), s, &cs);
+                // 格子自己的行高（比如表头的 lineHeight），逐行按这一行的字体算
+                let (mut text, edges) = self.cell_text(sl.text(), s, &cs);
                 let mut sets = self.text_args(&cs, s, &n.id);
                 if !sets.is_empty() {
                     sets = format!("#set text({sets})\n");
                 }
-                // 格子自己的行高（比如表头的 lineHeight）
-                {
-                    let cjk = metrics::has_cjk(&text);
-                    let _ = writeln!(
-                        sets,
-                        "#set text({})",
-                        line_edges(&cs, cs.line_height, cs.size_pt(), cjk, None)
-                    );
-                }
+                let _ = writeln!(sets, "{edges}");
                 if let Some(a) = cs.align.filter(|a| s.align != Some(*a)) {
                     let a = match a {
                         Align::Center => "center",
