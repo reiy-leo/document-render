@@ -103,7 +103,7 @@ document-render 的样式以 OOXML 为准：先把 Word、PowerPoint、Excel 能
 | `wrap` | 布尔：自动换行 | — | a:bodyPr wrap | wrapText | white-space | — |
 | `outlineLevel` | 1–9 | w:outlineLvl | — | — | — | — |
 
-表格自己不用 `spaceBefore`，写了会忽略；写在表格部位上是格子里段落的段前。见第九节「表格没有段前」。
+表格自己不用 `spaceBefore`，写了会忽略；写在表格部位上是格子里段落的段前（`spaceAfter` 同理是段后），三种格式都画。见第九节「表格没有段前」。
 
 ### 行距
 
@@ -383,7 +383,16 @@ Word 的表格没有段前，document-render 也不给表格本身段前（Rei 2
 - Table 的 `style`、组件样式 `Table`（顶层 `styles` 或样式集里）、自定义组件模板里写了 `spaceBefore`，check 给警告，渲染也给同样的警告，docx、pdf、html 都当没写。组件样式 `Table` 上的只报一次。
 - 表格上面要留距离，就调前一个元素的 `spaceAfter`。
 - 表格的 `spaceAfter` 照旧，管表格下面的距离。
-- 部位上的 `spaceBefore` 留着（Rei 2026-11-22 定），意思是格子里段落的段前：格子里的文字离格子上沿多远，和表格离上一段多远无关。`table`、`cell`、`header`、`oddRow` 这些部位都一样，格子自己的 `style` 也一样。docx 写在格子段落的 w:spacing before；pdf、html 现在还不画它（html 写成 td 的 margin-top，浏览器不认）。
+- 部位上的 `spaceBefore` 留着（Rei 2026-11-22 定），意思是格子里段落的段前：格子里的文字离格子上沿多远，和表格离上一段多远无关。`table`、`cell`、`header`、`oddRow` 这些部位都一样，格子自己的 `style` 也一样。`spaceAfter` 同理，是格子里段落的段后。
+- 三种格式都画格子的段前段后，照 Windows Word 2024 实测（2026-11-22）：
+  - docx 写在格子段落的 w:spacing before / after。
+  - Word 把它们算进行高，从上往下依次是上边距、段前、文字、段后、下边距。pdf 把段前段后加在格子的上下内边距上，html 加在 td 的 padding-top / padding-bottom 上，底色照样铺满整格。
+  - 两行之间的横线先占下一格的上边距，不占段前。
+  - 最小行高、竖直居中和靠下都把段前段后算在文字块里：居中时文字比不写段前段后挪 (段前 − 段后) ÷ 2。
+  - 格子里只有一段。文字里的换行是段内换行（docx 的 w:br），行和行之间不加段前段后。
+  - 负数当 0，和 docx 一样。
+  - 固定行高（`rule: "exact"`）时行不长高，放不下的部分露在下面（pdf 照旧；html 在格子里包一个定高的 div）。
+- 和 Word 比过的样例（表头、cell、奇偶行、格子自己的 style、换行、和 padding 叠加、粗行间线、最小行高、固定行高、竖直居中和靠下、合并格、中文和西文），格子里的文字和 Word 差都在 0.2pt 内（pdf 按导出的 PDF 量，html 按浏览器里的位置量）。
 - parse 不输出 Table 自己的 `spaceBefore`。表格前面那段的段后读回到那一段上，格子段落的段前读回到部位或格子的 `style` 上。
 
 ### 列宽
@@ -627,7 +636,7 @@ docx 现在把算好的样式直接写在段落和 run 上（直接格式）；�
 
 一个格子同时落在几个部位时，按 Word 的顺序叠：`table` → `cell` → 奇偶列 → 奇偶行 → 首末列 → 首末行 → 四角，后面的覆盖前面的。
 
-部位上写的 `spaceBefore` 是格子里段落的段前，不是表格的段前；表格本身没有段前，见第九节「表格没有段前」。
+部位上写的 `spaceBefore`、`spaceAfter` 是格子里段落的段前段后，不是表格的段前段后；三种格式都画，算进行高。表格本身没有段前，见第九节「表格没有段前」。
 
 表头默认粗体、浅灰底（#F3F3F3）。不要灰底就在表头部位写 `"background": "none"`，三种格式都不画底色；某一格自己写的 `background` 还是照画：
 

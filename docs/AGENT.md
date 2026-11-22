@@ -647,7 +647,7 @@ run 对象字段（多写会报错）：
 
 Table 内置样式：`border: 0.5pt solid #999999`、`cellPadding: 4`、`spaceAfter: 8`。部位上可以写 `padding*` 只改那部分格子。
 
-表格没有段前：Table 的 `style` 或 `styles` 里的 `Table` 写 `spaceBefore`，check 警告，渲染时忽略。表格上面要留距离，调前一个元素的 `spaceAfter`。部位（`cell`、`header`、`oddRow` 等）上的 `spaceBefore` 是格子里段落的段前，只有 docx 画，pdf、html 现在不画。
+表格没有段前：Table 的 `style` 或 `styles` 里的 `Table` 写 `spaceBefore`，check 警告，渲染时忽略。表格上面要留距离，调前一个元素的 `spaceAfter`。部位（`cell`、`header`、`oddRow` 等）和格子自己 `style` 上的 `spaceBefore`、`spaceAfter` 是格子里段落的段前段后，三种格式都画，算进行高（上边距 + 段前 + 文字 + 段后 + 下边距），格子里的换行之间不加。
 
 ### 4.8 页面（`meta.page`，也是第一节的设置）
 

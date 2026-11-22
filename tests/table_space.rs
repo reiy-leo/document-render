@@ -1,6 +1,8 @@
 //! 表格自己没有段前（Rei 2026-11-21 定）：Table 的 style、组件样式 `Table` 写了 `spaceBefore`，
 //! check 给警告，docx、pdf、html 都不管，parse 也不输出。
 //! 部位（`cell`、`header`、`oddRow` 这些）上的 `spaceBefore` 是格子里段落的段前，照旧（Rei 2026-11-22 定）。
+//! 部位和格子 style 上的段前段后三种格式都画：docx 写在格子段落上，pdf、html 叠在格子上下内边距上
+//! （2026-11-22 和 Windows Word 2024 比过：格子里的文字和行高差都在 0.2pt 内）。
 
 use std::io::Read;
 
@@ -191,4 +193,130 @@ fn check_command_prints_the_warning() {
         "{err}"
     );
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 两行的表，表格 style 和 parts 由调用方给。
+fn table_doc(rest: &str) -> String {
+    format!(
+        r#"{{
+  "root": "d",
+  "elements": {{
+    "d": {{ "type": "Document", "children": ["t"] }},
+    "t": {{ "type": "Table", "props": {{ "columns": ["名称", "数量"], "rows": [["苹果", {{ "text": "3", "style": {{ "spaceBefore": 10, "spaceAfter": 2 }} }}], ["梨", "4"]] }}{rest} }}
+  }}
+}}"#
+    )
+}
+
+#[test]
+fn pdf_adds_cell_spacing_to_insets() {
+    // 默认 cellPadding 4pt、0.5pt 边框：表头段前 6 → 上 4 + 0.5（上框线）+ 6；cell 段后 5 → 下 9；
+    // 格子自己的 style 盖掉部位的
+    let json =
+        table_doc(r#", "parts": { "header": { "spaceBefore": 6 }, "cell": { "spaceAfter": 5 } }"#);
+    let [_, typ, _] = outputs(&json);
+    assert!(
+        typ.contains("inset: (top: 10.5pt, right: 4pt, bottom: 9pt, left: 4pt)"),
+        "表头：{typ}"
+    );
+    assert!(
+        typ.contains("inset: (top: 14pt, right: 4pt, bottom: 6pt, left: 4pt)"),
+        "格子自己的段前 10、段后 2：{typ}"
+    );
+    assert!(
+        typ.contains("inset: (top: 4pt, right: 4pt, bottom: 9pt, left: 4pt)"),
+        "普通格子只有段后：{typ}"
+    );
+}
+
+#[test]
+fn pdf_spacing_stacks_on_part_padding_and_inner_lines() {
+    // 部位 paddingTop 2 + 段前 7；3pt 的行间线先吃上边距（2pt），多的 1pt 加进去，不吃段前
+    let json = table_doc(
+        r#", "style": { "border": "3pt solid #000", "cellPadding": 8 }, "parts": { "cell": { "paddingTop": 2, "spaceBefore": 7 } }"#,
+    )
+    .replace(r#""style": { "spaceBefore": 10, "spaceAfter": 2 }"#, r#""style": {}"#);
+    let [_, typ, _] = outputs(&json);
+    assert!(
+        typ.contains("inset: (top: 10pt, right: 8pt, bottom: 8pt, left: 8pt)"),
+        "中间一行：2 + 1 + 7：{typ}"
+    );
+}
+
+#[test]
+fn html_puts_cell_spacing_into_padding() {
+    let json = table_doc(r#", "parts": { "cell": { "spaceBefore": 6, "spaceAfter": "1em" } }"#);
+    let [_, _, h] = outputs(&json);
+    // td 上不再写浏览器不认的 margin
+    for td in h.split("<td").skip(1) {
+        let td = &td[..td.find('>').unwrap()];
+        assert!(
+            !td.contains("margin-top") && !td.contains("margin-bottom"),
+            "{td}"
+        );
+    }
+    assert!(
+        h.contains("padding-top:10pt;padding-bottom:14.5pt;"),
+        "段前 6、段后 1em（10.5pt）叠在 4pt 内边距上：{h}"
+    );
+    assert!(
+        h.contains("padding-top:14pt;padding-bottom:6pt;"),
+        "格子自己的段前 10、段后 2：{h}"
+    );
+}
+
+#[test]
+fn html_exact_row_keeps_its_height() {
+    // 固定 30pt 的行：上下内边距 4 + 段前段后 5 → 里面 12pt 高
+    let json = table_doc(r#", "parts": { "cell": { "spaceBefore": 5, "spaceAfter": 5 } }"#)
+        .replace(
+            r#""rows": [["#,
+            r#""rowHeights": [null, { "height": 30, "rule": "exact" }], "rows": [["#,
+        )
+        .replace(
+            r#""style": { "spaceBefore": 10, "spaceAfter": 2 }"#,
+            r#""style": {}"#,
+        );
+    let [_, _, h] = outputs(&json);
+    assert!(h.contains(r#"<div style="height:12pt">苹果</div>"#), "{h}");
+    assert_eq!(h.matches(r#"<div style="height:12pt">"#).count(), 2, "{h}");
+}
+
+#[test]
+fn line_breaks_inside_a_cell_get_no_spacing() {
+    // 格子里的换行是段内换行（docx 的 w:br）：段前段后只在整格上下各一次
+    let json = table_doc(r#", "parts": { "cell": { "spaceBefore": 6, "spaceAfter": 6 } }"#)
+        .replace(r#""梨""#, r#""梨\n第二行""#);
+    let [x, typ, _] = outputs(&json);
+    assert!(
+        x.contains(r#"<w:br w:type="textWrapping" />"#) || x.contains("<w:br"),
+        "{x}"
+    );
+    let tbl = &x[x.find("<w:tbl>").unwrap()..x.find("</w:tbl>").unwrap()];
+    assert_eq!(
+        tbl.matches("<w:p ").count() + tbl.matches("<w:p>").count(),
+        6,
+        "一格一段：{tbl}"
+    );
+    assert!(
+        typ.contains("inset: (top: 10pt, right: 4pt, bottom: 10pt, left: 4pt)"),
+        "{typ}"
+    );
+}
+
+#[test]
+fn styles_example_total_row_spacing_shows_in_every_format() {
+    // examples/styles.json 合计行 lastRow 写了 spaceBefore: 3：三种格式都要看得出来
+    let json = include_str!("../examples/styles.json");
+    let [x, typ, h] = outputs(json);
+    assert!(x.contains(r#"w:before="60""#), "docx 合计行段前 3pt");
+    let total = &h[h.rfind("<tr>").unwrap()..];
+    assert!(
+        total.contains("合计") && total.contains("padding-top:7pt;"),
+        "{total}"
+    );
+    let i = typ.find("#\"合计\"").unwrap();
+    let cell = &typ[typ[..i].rfind("table.cell(").unwrap()..i];
+    // 上内边距 4 + 1.5pt 双线比边距细、不加 + 段前 3
+    assert!(cell.contains("inset: (top: 7pt,"), "{cell}");
 }

@@ -985,7 +985,31 @@ impl Html<'_> {
                 cs.merge(&part);
                 // 先写表格的 cellPadding，部位上写的 padding 跟在后面盖掉对应的边
                 let mut css = format!("padding:{pad}pt;");
-                css.push_str(&self.css(&part, Some(s), &n.id, Ctx::Cell));
+                // 部位和格子 style 上的段前段后是格子里那段文字的。td 的 margin 浏览器不认，
+                // 照 Word 把它们叠在上下内边距上（格子里只有一段，效果一样）
+                let mut own = part.clone();
+                own.space_before = None;
+                own.space_after = None;
+                css.push_str(&self.css(&own, Some(s), &n.id, Ctx::Cell));
+                let fs = cs.size_pt();
+                let space = |l: Option<Len>| l.map_or(0.0, |l| l.pt(fs, 0.0).max(0.0));
+                let mut vpad = 0.0;
+                for (e, k, v) in [
+                    (Edge::Top, "top", space(part.space_before)),
+                    (Edge::Bottom, "bottom", space(part.space_after)),
+                ] {
+                    let p = part.padding_side(e).unwrap_or(pad);
+                    vpad += p + v;
+                    if v > 0.0 {
+                        let _ = write!(css, "padding-{k}:{}pt;", p + v);
+                    }
+                }
+                // 固定行高：tr 的 height 在浏览器里只是最小值，内容（加上段前段后）放不下时行会长高。
+                // 格子里包一个定高的 div，行就停在写的高度，多出来的照 pdf 露在下面
+                let exact = g
+                    .row_height(p, r)
+                    .filter(|h| h.exact && sl.row_span == 1)
+                    .map(|h| (h.height - vpad).max(0.0));
                 // 行高按整格的样式（字体是继承来的）算
                 if let Some(lh) =
                     line_height_css(&cs, metrics::has_cjk(&format!("{:?}", sl.text())), None)
@@ -1020,7 +1044,13 @@ impl Html<'_> {
                 }
                 a.push_str(&mark);
                 let _ = write!(self.out, "<{tag}{a}>");
+                if let Some(h) = exact {
+                    let _ = write!(self.out, "<div style=\"height:{h}pt\">");
+                }
                 self.inline_in(sl.text(), s, &cs, &n.id);
+                if exact.is_some() {
+                    self.out.push_str("</div>");
+                }
                 let _ = write!(self.out, "</{tag}>");
             }
             self.out.push_str("</tr>\n");

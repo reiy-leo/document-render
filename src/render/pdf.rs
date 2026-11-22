@@ -1176,11 +1176,25 @@ impl Markup<'_> {
                     Edge::Bottom if last => above[g.rows],
                     _ => 0.0,
                 };
+                // 部位和格子 style 上的段前段后是格子里那段文字的（docx 写在格子段落上）。
+                // Word 把它们算进行高：上边距、段前、文字、段后、下边距依次叠起来，
+                // 行间线只吃上边距、不吃段前（2026-11-22 Windows Word 2024 实测）。
+                // 格子里只有一段（换行是段内换行），所以直接加进上下内边距，
+                // 底色、最小行高、竖直对齐都跟着对
+                let (sb, sa) = cell_space(&part, cs.size_pt());
+                let space = |e: &Edge| match e {
+                    Edge::Top => sb,
+                    Edge::Bottom => sa,
+                    _ => 0.0,
+                };
                 let pads: Vec<String> = Edge::ALL
                     .iter()
                     .zip(["top", "right", "bottom", "left"])
                     .map(|(e, k)| {
-                        format!("{k}: {}pt", part.padding_side(*e).unwrap_or(pad) + line(e))
+                        format!(
+                            "{k}: {}pt",
+                            part.padding_side(*e).unwrap_or(pad) + line(e) + space(e)
+                        )
                     })
                     .collect();
                 args.push(format!("inset: ({})", pads.join(", ")));
@@ -1196,7 +1210,7 @@ impl Markup<'_> {
                 }
                 let ins: Vec<f32> = Edge::ALL
                     .iter()
-                    .map(|e| part.padding_side(*e).unwrap_or(pad) + line(e))
+                    .map(|e| part.padding_side(*e).unwrap_or(pad) + line(e) + space(e))
                     .collect();
                 // 最小行高：Typst 的行只有固定高度，最小高度靠把内容撑到那么高（只看单行的格子）
                 if let Some(h) = rh.filter(|h| !h.exact && sl.row_span == 1) {
@@ -1569,6 +1583,12 @@ fn tiling(t: &common::Tile, vertical: bool) -> String {
 /// 表格格子某一边的 stroke。格子边线的长短跟着行高走，所以图案线也写成 stroke 的 paint：
 /// 不断的线（双线、粗细线、立体线）用硬边渐变画成几条，没有拼缝；虚线、波浪线用以线为中心的 SVG 图案铺。
 /// 和 Typst 的 stroke 一样，线的中线压在格子边上。
+/// 格子段落的段前、段后（pt）：只看部位和格子自己的 style，不从表格继承；负数当 0（docx 也写不出负的）。
+fn cell_space(part: &Style, fs: f32) -> (f32, f32) {
+    let pt = |l: Option<Len>| l.map_or(0.0, |l| l.pt(fs, 0.0).max(0.0));
+    (pt(part.space_before), pt(part.space_after))
+}
+
 fn cell_stroke(b: Option<&Border>, side: Edge) -> String {
     let Some(t) = b.and_then(|x| common::border_tile(x, side)) else {
         return stroke(b, side);
