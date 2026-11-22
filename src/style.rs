@@ -50,13 +50,17 @@ macro_rules! str_enum {
 
 // ---------- 长度 ----------
 
+/// `line` 单位 1 行多少 pt。Word 在没有文档网格（w:docGrid）时把 beforeLines、afterLines
+/// 的 1 行算成 12pt，跟字号无关（Word 2024 实测）；document-render 写的 docx 不带网格
+pub const LINE_PT: f32 = 12.0;
+
 /// 长度：数字是 pt；字符串可带 pt、mm、cm、in、px、em、line、%。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Len {
     Pt(f32),
     /// 当前字号的倍数
     Em(f32),
-    /// 行数，只用在段前段后
+    /// 行数，主要用在段前段后。照 Word 没有文档网格时的算法，1 行 = 12pt，跟字号无关
     Line(f32),
     /// 百分比，用在宽高
     Pct(f32),
@@ -101,12 +105,12 @@ impl Len {
         match self {
             Len::Pt(v) => v,
             Len::Em(v) => v * font_size,
-            Len::Line(v) => v * font_size * 1.2,
+            Len::Line(v) => v * LINE_PT,
             Len::Pct(v) => v / 100.0 * whole,
         }
     }
 
-    /// 不需要上下文的 pt（em 按 10.5pt 字号，百分比当 0）。
+    /// 不需要上下文的 pt（em 按 10.5pt 字号，line 按 12pt，百分比当 0）。
     pub fn abs_pt(self) -> f32 {
         self.pt(DEFAULT_FONT_SIZE, 0.0)
     }

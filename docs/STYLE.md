@@ -14,7 +14,7 @@ document-render 的样式以 OOXML 为准：先把 Word、PowerPoint、Excel 能
 - 按 OOXML 的层级分组：文字（rPr）、段落（pPr）、边框、背景、盒子（表格单元格、文本框）、表格、页面。分组只用来写文档；JSON 里字段平铺在 `style` 下，不嵌套。
 - 长度：数字就是 pt；字符串可以带单位：`pt`、`mm`、`cm`、`in`、`px`（按 96 dpi 折算），还有两个排版单位：
   - `em`：当前字号的倍数，`"2em"` 就是首行缩进两个字。Word 里对应 `firstLineChars` 这类按字符计的属性。
-  - `line`：行数，只用在段前段后，`"0.5line"` 对应 Word 的 `beforeLines`。
+  - `line`：行数，主要用在段前段后，`"0.5line"` 对应 Word 的 `beforeLines`。1 行 = 12pt，跟字号无关：Word 在没有文档网格时就这么算（Rei 2026-11-22 定，Windows Word 2024 实测）。document-render 写的 docx 不带文档网格，所以三种格式都按 12pt：docx 照写 beforeLines、afterLines，pdf、html 换成 pt。别的地方写 `line`（比如固定行高 `"2line"`、缩进）也按 12pt 换算。多倍行距（`lineHeight` 写数字或 `{ multiple }`）不受影响，还是看字体。
 - 颜色：`#RRGGBB`，以后加 `#RRGGBBAA`（只有 PPT、HTML、PDF 认透明度）。不做主题色名。
 - 同一个属性分「全部」和「单边」两种写法，单边覆盖全部：`border` 和 `borderTop`，`padding` 和 `paddingLeft`。
 
@@ -140,7 +140,7 @@ pdf 和 html 的行高照 Windows 版 Word 排 docx 的规则算（2026-11-18 �
 - markdown：不管行距。
 - 字体都找不到时按 0.88 + 0.29 = 1.17 倍字号算。
 - 字体按「列表里第一个本机找得到的」算，和 pdf 实际用的一样；docx 只写列表里第一个。本机没有、Word 那台有的字体（比如 Linux 上没有 PingFang SC），pdf 和 Word 会对不上。默认中文字体 PingFang SC 在 Windows 上没有，Word 换成微软雅黑，所以默认字体列表里雅黑排在 Noto、思源前面。
-- document-render 写的 docx 不带文档网格（`w:docGrid`），所以不做网格对齐。parse 读到带网格的 Word 文档时给警告。
+- document-render 写的 docx 不带文档网格（`w:docGrid`），所以不做网格对齐，`line` 单位也按没有网格时的 12pt 算。有网格时 Word 的一行是网格行距（linePitch），document-render 不支持网格，这种情况没做也没测。parse 读到带网格的 Word 文档时给警告。
 
 ## 四、边框（对应 w:pBdr、w:tblBorders、w:tcBorders、a:ln、xlsx border）
 

@@ -496,7 +496,7 @@ run 对象字段（多写会报错）：
 
 | 类型 | 写法 |
 |---|---|
-| 长度 | 数字 = pt；字符串带单位：`pt` `mm` `cm` `in` `px`（96dpi）、`em`（当前字号倍数，`"2em"` 首行缩进两字）、`line`（行数，只用于 `spaceBefore`/`spaceAfter`）、`%`（用于 `width`/`height`） |
+| 长度 | 数字 = pt；字符串带单位：`pt` `mm` `cm` `in` `px`（96dpi）、`em`（当前字号倍数，`"2em"` 首行缩进两字）、`line`（行数，1 行 = 12pt，跟字号无关，和 Word 一样；一般用于 `spaceBefore`/`spaceAfter`）、`%`（用于 `width`/`height`） |
 | 颜色 | `"#RGB"` `"#RRGGBB"` `"#RRGGBBAA"`，必须带 `#`，不认 `"red"` |
 | 布尔 | `true`/`false` |
 | 边框 | `"1pt solid #CCCCCC"`、`"none"`，或 `{ "width": 1, "style": "solid", "color": "#CCCCCC" }`；简写里缺的部分默认 1pt、solid、黑色 |
@@ -543,7 +543,7 @@ run 对象字段（多写会报错）：
 | 字段 | 取值 | 说明 |
 |---|---|---|
 | `align` | `left` `center` `right` `justify` `distribute` | |
-| `spaceBefore` `spaceAfter` | 长度或 `"0.5line"` | 段前段后，不继承；Table 自己不用 `spaceBefore`（见 4.7） |
+| `spaceBefore` `spaceAfter` | 长度或 `"0.5line"`（半行，6pt） | 段前段后，不继承；Table 自己不用 `spaceBefore`（见 4.7） |
 | `lineHeight` | 见 4.3 | 行距 |
 | `marginLeft` `marginRight` | 长度 | 整段缩进，不继承 |
 | `textIndent` | 长度 | 首行缩进，常用 `"2em"` |

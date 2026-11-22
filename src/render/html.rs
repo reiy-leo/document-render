@@ -1314,7 +1314,6 @@ impl Html<'_> {
                 s.$f.is_some() && parent.map(|p| p.$f != s.$f).unwrap_or(true)
             };
         }
-        let fs = s.size_pt();
         if changed!(font_family)
             && let Some(f) = &s.font_family
         {
@@ -1473,10 +1472,10 @@ impl Html<'_> {
             }
         }
         if let Some(v) = s.space_before {
-            let _ = write!(o, "margin-top:{};", len_css_line(v, fs));
+            let _ = write!(o, "margin-top:{};", len_css(v));
         }
         if let Some(v) = s.space_after {
-            let _ = write!(o, "margin-bottom:{};", len_css_line(v, fs));
+            let _ = write!(o, "margin-bottom:{};", len_css(v));
         }
         // 行高按 Windows Word 的规则算（见 metrics），跟字体和有没有中文有关，
         // 所以块、列表项每个都写；文字 run 只在 lineHeight 变了时写。格子在 table 里另算
@@ -1622,15 +1621,8 @@ fn len_css(l: Len) -> String {
     match l {
         Len::Pt(v) => format!("{v}pt"),
         Len::Em(v) => format!("{v}em"),
-        Len::Line(v) => format!("{}em", v * 1.2),
+        Len::Line(v) => format!("{}pt", v * crate::style::LINE_PT),
         Len::Pct(v) => format!("{v}%"),
-    }
-}
-
-fn len_css_line(l: Len, fs: f32) -> String {
-    match l {
-        Len::Line(v) => format!("{}pt", v * fs * 1.2),
-        l => len_css(l),
     }
 }
 
