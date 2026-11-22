@@ -118,6 +118,7 @@ fn table_space_after_in_lines() {
     let [docx, typ, html] = outputs(json);
     assert!(docx.contains(r#"w:after="220""#), "{docx}");
     assert!(!docx.contains("w:afterLines"), "{docx}");
-    assert!(typ.contains("below: 12pt"), "{typ}");
+    // pdf 另加 Word 表格后的 0.04pt（见 metrics::WORD_TABLE_TAIL）
+    assert!(typ.contains("below: 12.04pt"), "{typ}");
     assert!(html.contains("margin-bottom:12pt"), "{html}");
 }

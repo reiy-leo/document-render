@@ -613,7 +613,14 @@ impl Markup<'_> {
             let _ = writeln!(
                 sets,
                 "#set text({})",
-                line_edges(s, s.line_height, fs, cjk, marker)
+                line_edges(
+                    s,
+                    s.line_height,
+                    fs,
+                    cjk,
+                    marker,
+                    px_line(s.space_after.map_or(0.0, |a| a.pt(fs, 0.0)))
+                )
             );
             par.push("leading: 0pt".into());
         }
@@ -893,18 +900,22 @@ impl Markup<'_> {
     /// 整格的行盒取两种行盒逐项小的那个，Typst 取一行里最高的，这一行就是标记的高度。
     /// 不能拿西文行盒当整格的：最小行高多出来的部分加在西文行的基线上面，和中文行的下沿
     /// 拼在一起会比 Word 高。返回 (文字, 整格行盒的 `#set text(...)`)。
-    fn cell_text(&mut self, t: &Inline, old: &Style, cs: &Style) -> (String, String) {
+    fn cell_text(&mut self, t: &Inline, old: &Style, cs: &Style, sa: f32) -> (String, String) {
+        let px = px_line(sa);
         let lines = common::line_cjk(t, old, cs);
         let fs = cs.size_pt();
         let any = lines.iter().any(|x| *x);
         if !any || lines.iter().all(|x| *x) {
             let set = format!(
                 "#set text({})",
-                line_edges(cs, cs.line_height, fs, any, None)
+                line_edges(cs, cs.line_height, fs, any, None, px)
             );
             return (self.inline_in(t, old, cs), set);
         }
-        let lb = |cjk| metrics::line_box(&metrics::style_line(cs, cjk, None), cs.line_height, fs);
+        let lb = |cjk| {
+            let m = metrics::style_line(cs, cjk, None);
+            lbox(&m, cs.line_height, fs, px)
+        };
         let (lat, cjk) = (lb(false), lb(true));
         let base = metrics::LineBox {
             top_em: lat.top_em.min(cjk.top_em),
@@ -1246,7 +1257,8 @@ impl Markup<'_> {
                 let mut cs = s.inherited();
                 cs.merge(&part);
                 // 格子自己的行高（比如表头的 lineHeight），逐行按这一行的字体算
-                let (mut text, edges) = self.cell_text(sl.text(), s, &cs);
+                let sa0 = cell_space(&part, cs.size_pt()).1;
+                let (mut text, edges) = self.cell_text(sl.text(), s, &cs, sa0);
                 let mut sets = self.text_args(&cs, s, &n.id);
                 if !sets.is_empty() {
                     sets = format!("#set text({sets})\n");
@@ -1371,6 +1383,10 @@ impl Markup<'_> {
         outer.padding = None;
         // 表格没有段前（建树时已经去掉，这里再保险一次），和 docx 一致
         outer.space_before = None;
+        // Word 里表格后面的段落比我们算的低约 0.04pt（30 个表格实测，和线宽、行高规则、行数无关，原因没查到），照加
+        let fs = outer.size_pt();
+        let gap = outer.space_after.map_or(0.0, |l| l.pt(fs, 0.0));
+        outer.space_after = Some(Len::Pt(gap + metrics::WORD_TABLE_TAIL));
         self.block(src, &outer, parent, &n.id);
     }
 
@@ -1968,7 +1984,22 @@ fn line_edges(
     fs: f32,
     cjk: bool,
     marker: Option<(&str, f32)>,
+    px: bool,
 ) -> String {
     let m = metrics::style_line(s, cjk, marker);
-    metrics::line_box(&m, l, fs).typst()
+    lbox(&m, l, fs, px).typst()
+}
+
+/// 段后为 0 的段落按像素分基线（[`metrics::line_box_px`]），段后不为 0 的照浮点（[`metrics::line_box`]）。
+/// 2026-11-22 和 Word 2024 逐行比出来的规律（docs/STYLE.md「Word 的取整」），原因没查清。
+fn px_line(space_after: f32) -> bool {
+    space_after <= 0.0
+}
+
+fn lbox(m: &metrics::LineMetrics, l: Option<LineHeight>, fs: f32, px: bool) -> metrics::LineBox {
+    if px {
+        metrics::line_box_px(m, l, fs)
+    } else {
+        metrics::line_box(m, l, fs)
+    }
 }

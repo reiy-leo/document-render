@@ -399,6 +399,10 @@ pub fn line_box(m: &LineMetrics, l: Option<LineHeight>, fs: f32) -> LineBox {
 /// Word 排版落到的设备像素：1/600 英寸 = 0.12pt。
 pub const WORD_PX: f32 = 0.12;
 
+/// 表格后面多出来的一点间距（pt）：Word 里表格后面的段落比按行高、线宽算出来的低这么多。
+/// 2026-11-22 Word 2024 实测 30 个表格（0.5pt、3pt 线，固定、最小、自动行高）都落在 0.040～0.042pt，原因没查到。
+pub const WORD_TABLE_TAIL: f32 = 0.04;
+
 /// 线框在 Word 里画出来的粗细（pt）：标称粗细往下取整到整像素（1/600 英寸），不到 1 像素的照原样画。
 ///
 /// 2026-11-22 在 Windows Word 2024 上导出 PDF 实测：0.5pt 画成 0.48pt，1pt 画成 0.96pt，2.25pt 画成 2.16pt，
@@ -406,6 +410,48 @@ pub const WORD_PX: f32 = 0.12;
 pub fn border_drawn(w: f32) -> f32 {
     let px = (w / WORD_PX + 1e-3).floor();
     if px < 1.0 { w } else { px * 12.0 / 100.0 }
+}
+
+/// 四舍五入（.5 进位），和 Word 一样，不用银行家舍入。
+fn round_half_up(v: f32) -> f32 {
+    (v + 0.5).floor()
+}
+
+/// 和 [`line_box`] 一样，只是基线在行里的位置照 Word 按像素取整（行高不变，只在上下之间挪一点，最多半个像素）。
+/// pdf 在段后为 0 的段落（含格子里的段落）用它，段后不为 0 的仍用 [`line_box`]，见 docs/STYLE.md「Word 的取整」。
+/// 按行距方式：
+///
+/// - 单倍：基线离行顶 min(round(H), H) − round(d)。
+/// - 多倍（auto）：round(H) − round(H − s) − round(d)，s 是单倍行高；倍数不到 1 时不挪。
+/// - 至少（含 CSS 倍数）：min(round(H), H) − round(d)。
+/// - 固定：H − round(0.2 × H)。
+///
+/// 单倍是 80 种字体字号 × 12 行实测里 99% 的行逐像素对上；多倍、至少、固定是拟合出来的，
+/// 实测分别约 94%、91%、90% 的行对上，其余差 1 像素（0.12pt）。
+pub fn line_box_px(m: &LineMetrics, l: Option<LineHeight>, fs: f32) -> LineBox {
+    let b = line_box(m, l, fs);
+    if fs <= 0.0 {
+        return b;
+    }
+    let k = 1.0 / WORD_PX;
+    let r = round_half_up;
+    let s = m.natural() * fs * k;
+    let d = m.desc * fs * k;
+    let h = b.height(fs) * k;
+    let top = match l {
+        None => h.min(r(h)) - r(d),
+        Some(LineHeight::FontMultiple(x)) if x > 1.0 => r(h) - r(h - s) - r(d),
+        Some(LineHeight::FontMultiple(_)) if (h - s).abs() < 1e-3 => h.min(r(h)) - r(d),
+        Some(LineHeight::FontMultiple(_)) => return b,
+        Some(LineHeight::Multiple(_) | LineHeight::AtLeast(_)) => h.min(r(h)) - r(d),
+        Some(LineHeight::Exact(_)) => h - r(0.2 * h),
+    };
+    let delta = top / k - b.top(fs);
+    LineBox {
+        top_pt: b.top_pt + delta,
+        bottom_pt: b.bottom_pt - delta,
+        ..b
+    }
 }
 
 /// 文字里有没有 Word 会用东亚字体排的字（中日韩文字、假名、谚文、全角标点）。
@@ -730,6 +776,41 @@ mod tests {
             );
         }
         assert!((border_drawn(0.1) - 0.1).abs() < 1e-6);
+    }
+
+    #[test]
+    fn baseline_offset_on_word_pixels() {
+        // Arial 10.5 单倍：H = 100.6165px、d = 18.542px → 基线离行顶 min(101, 100.6165) − 19 = 81.6165px
+        let arial = metrics(1921.0 / 2048.0, 434.0 / 2048.0);
+        let m = LineMetrics::of(&[(arial, 1.0)]);
+        let b = line_box_px(&m, None, 10.5);
+        assert!((b.height(10.5) - line_box(&m, None, 10.5).height(10.5)).abs() < 1e-4);
+        assert!(
+            (b.top(10.5) / WORD_PX - 81.6165).abs() < 1e-2,
+            "{}",
+            b.top(10.5) / WORD_PX
+        );
+        // Consolas 18：H = 175.634、d = 37.646 → min(176, 175.634) − 38 = 137.634
+        let consolas = metrics(1884.0 / 2048.0, 514.0 / 2048.0);
+        let m = LineMetrics::of(&[(consolas, 1.0)]);
+        let b = line_box_px(&m, None, 18.0);
+        assert!((b.top(18.0) / WORD_PX - 137.634).abs() < 1e-2);
+        // 固定 15pt = 125px：H − round(25) = 100px = 12pt
+        let b = line_box_px(
+            &m,
+            Some(LineHeight::Exact(crate::style::Len::Pt(15.0))),
+            18.0,
+        );
+        assert!((b.top(18.0) - 12.0).abs() < 1e-3);
+        assert!((b.height(18.0) - 15.0).abs() < 1e-3);
+        // 1.5 倍（auto）：Arial 10.5，H = 150.925，s = 100.617 → round(H) − round(H − s) − round(d) = 151 − 50 − 19 = 82
+        let m = LineMetrics::of(&[(arial, 1.0)]);
+        let b = line_box_px(&m, Some(LineHeight::FontMultiple(1.5)), 10.5);
+        assert!(
+            (b.top(10.5) / WORD_PX - 82.0).abs() < 1e-2,
+            "{}",
+            b.top(10.5) / WORD_PX
+        );
     }
 
     #[test]
