@@ -191,7 +191,7 @@ struct Markup<'a> {
     /// 格子里逐行的行盒：每行开头放的撑高标记（有中文的行才有）和当前排到第几行。
     /// Word 逐行按这一行的字体算行高，见 `cell_text`
     line_marks: Option<(Vec<Option<String>>, usize)>,
-    /// 正在排的是 docx 里写成段落的块（Text、Heading、Quote、Callout、Divider、Math 和合框）：
+    /// 正在排的是 docx 里写成段落的块（Text、Heading、Quote、Callout、Divider、Code、Math 和合框）：
     /// Word 把段落上下边框的粗细算进段落高度，见 `block_src`
     para_border: bool,
 }
@@ -270,6 +270,7 @@ impl Markup<'_> {
                 | Component::Quote(_)
                 | Component::Callout(_)
                 | Component::Divider(_)
+                | Component::Code(_)
                 | Component::Math(_)
         );
         self.node_inner(n, parent);
@@ -1082,11 +1083,9 @@ impl Markup<'_> {
             );
         }
         let _ = write!(body, "#raw({}, block: true)", lit(&p.code));
-        // 字体已经给 raw 了，外层不再设
-        let mut outer = s.clone();
-        outer.font_family = parent.font_family.clone();
-        outer.font_size = parent.font_size;
-        self.block(body, &outer, parent, &n.id);
+        // 外层块也用代码的字体字号：行盒照 Word 按这段的字体算（Word 里代码是一个段落，
+        // 每行是段内换行，行高 = 代码字体字号下的 lineHeight），不能按父级的字体字号算
+        self.block(body, s, parent, &n.id);
     }
 
     fn list(&mut self, n: &Node, p: &ListProps, parent: &Style) {
