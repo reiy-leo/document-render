@@ -62,16 +62,16 @@ pub struct Output {
 }
 
 /// 渲染。pdf、docx 先查字体：文档用到的字体本机没有就报错，`allow_missing_fonts` 时改成警告。
-/// html、Markdown 不查，浏览器自己回退。
+/// html、Markdown 不查，浏览器自己回退。建树时忽略掉的样式字段（[`crate::check_styles`]）排在警告最前面。
 pub fn render(doc: &Doc, tree: &Node, format: Format, opts: &Options) -> Result<Output> {
-    let mut font_warnings = Vec::new();
+    let mut warnings = crate::check_styles(doc);
     if matches!(format, Format::Pdf | Format::Docx) {
         let miss = crate::fonts::missing(doc, tree);
         if !miss.is_empty() {
             if !opts.allow_missing_fonts {
                 bail!("{}", crate::fonts::error_message(&miss, format));
             }
-            font_warnings = crate::fonts::warnings(&miss, format);
+            warnings.extend(crate::fonts::warnings(&miss, format));
         }
     }
     let mut out = match format {
@@ -80,7 +80,7 @@ pub fn render(doc: &Doc, tree: &Node, format: Format, opts: &Options) -> Result<
         Format::Pdf => pdf::render(doc, tree, opts)?,
         Format::Markdown => markdown::render(doc, tree, opts),
     };
-    font_warnings.append(&mut out.warnings);
-    out.warnings = font_warnings;
+    warnings.append(&mut out.warnings);
+    out.warnings = warnings;
     Ok(out)
 }

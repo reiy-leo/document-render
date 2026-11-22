@@ -171,7 +171,10 @@ fn main() -> Result<()> {
             let env = defs.env(&input)?;
             let (d, tree) = document_render::prepare(&text, &env)
                 .with_context(|| format!("{} 校验没通过", input.display()))?;
-            for w in document_render::check_math(&tree) {
+            for w in document_render::check_styles(&d)
+                .into_iter()
+                .chain(document_render::check_math(&tree))
+            {
                 eprintln!("警告：{w}");
             }
             let fonts = document_render::check_fonts(&d, &tree);

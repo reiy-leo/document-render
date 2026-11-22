@@ -733,6 +733,8 @@ impl Ctx {
         }
         let id = self.id("table");
         let mut el = json!({ "type": "Table", "props": props });
+        // 表格自己没有段前：表格上面的距离归前一段的段后，格子里段落的段前归部位和格子
+        tstyle.remove("spaceBefore");
         compact(&mut tstyle);
         el["style"] = Value::Object(tstyle);
         let mut parts = Map::new();

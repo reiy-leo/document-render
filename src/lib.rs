@@ -89,6 +89,12 @@ pub fn check_math(tree: &doc::Node) -> Vec<String> {
     out
 }
 
+/// 写了但不起作用、渲染时忽略的样式字段（如 Table 自己的 spaceBefore），每处一条警告。
+/// 在 [`prepare`] 建树时收集；渲染时 [`render::render`] 也把它们放进警告。
+pub fn check_styles(d: &doc::Doc) -> Vec<String> {
+    d.style_warnings.borrow().clone()
+}
+
 /// 文档用到、本机又没有的字体，每个一条说明。check 用；渲染 pdf、docx 时同样的检查在
 /// [`render::render`] 里做，找不到就报错（除非 `allow_missing_fonts`）。规则见 [`fonts`]。
 pub fn check_fonts(d: &doc::Doc, tree: &doc::Node) -> Vec<String> {

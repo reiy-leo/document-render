@@ -43,6 +43,10 @@ pub struct Doc {
     /// 文件里读来的样式集（--style-sets、styles/ 目录），prepare 时填；报缺字体时找它写在哪个键里
     #[serde(skip)]
     pub external_style_sets: BTreeMap<String, crate::cascade::StyleSetDef>,
+    /// 算样式时发现的、写了但不起作用的字段（如 Table 自己的 spaceBefore），建树时填，
+    /// check 和渲染都当警告报出来
+    #[serde(skip)]
+    pub style_warnings: std::cell::RefCell<Vec<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -799,9 +803,14 @@ impl Doc {
                 );
             }
         }
-        let (style, parts) = sheet
+        let (mut style, parts) = sheet
             .element(el, spec, &component, parent)
             .with_context(|| format!("元素 `{id}` 的样式不对"))?;
+        // 表格自己没有段前（Word 的表格没有这个属性），写了就忽略；
+        // 部位上的 spaceBefore 是格子里段落的段前，不在这里
+        if matches!(component, Component::Table(_)) && style.space_before.take().is_some() {
+            self.warn_table_space_before(id, el, sheet)?;
+        }
         for t in component.inlines_mut() {
             for r in t.runs_mut() {
                 r.computed = sheet
@@ -838,6 +847,32 @@ impl Doc {
             parts,
             children,
         })
+    }
+}
+
+impl Doc {
+    /// Table 自己写了 spaceBefore：报一条警告，说清写在哪。styles 里的 `Table` 只报一次。
+    fn warn_table_space_before(&self, id: &str, el: &Element, sheet: &Sheet) -> Result<()> {
+        const TAIL: &str = "表格没有段前，已忽略。表格上面的距离用前一个元素的 `spaceAfter` 调；格子里段落的段前写在部位上（如 `parts.cell`）";
+        let own = match &el.style {
+            Some(v) => sheet.resolve(v)?.space_before.is_some(),
+            None => false,
+        };
+        let msg = if own {
+            format!("元素 `{id}` 的 style 写了 `spaceBefore`：{TAIL}")
+        } else if sheet
+            .comp("Table")
+            .is_some_and(|c| c.space_before.is_some())
+        {
+            format!("组件样式 `Table`（styles 或样式集里）写了 `spaceBefore`：{TAIL}")
+        } else {
+            format!("元素 `{id}` 从自定义组件或组件样式里拿到了 `spaceBefore`：{TAIL}")
+        };
+        let mut w = self.style_warnings.borrow_mut();
+        if !w.contains(&msg) {
+            w.push(msg);
+        }
+        Ok(())
     }
 }
 

@@ -287,7 +287,7 @@ impl Sheet {
         &self.root
     }
 
-    fn comp(&self, key: &str) -> Option<&Style> {
+    pub(crate) fn comp(&self, key: &str) -> Option<&Style> {
         self.comp.get(key)
     }
 

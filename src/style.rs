@@ -1171,6 +1171,7 @@ pub struct Style {
     // 段落
     #[serde(skip_serializing_if = "Option::is_none")]
     pub align: Option<Align>,
+    /// 段前。写在 Table 自己身上不起作用（check 警告，渲染时忽略）；写在表格部位上是格子里段落的段前
     #[serde(skip_serializing_if = "Option::is_none")]
     pub space_before: Option<Len>,
     #[serde(skip_serializing_if = "Option::is_none")]

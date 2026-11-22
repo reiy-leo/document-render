@@ -1247,6 +1247,8 @@ impl Markup<'_> {
         outer.border_inside_h = None;
         outer.border_inside_v = None;
         outer.padding = None;
+        // 表格没有段前（建树时已经去掉，这里再保险一次），和 docx 一致
+        outer.space_before = None;
         self.block(src, &outer, parent, &n.id);
     }
 

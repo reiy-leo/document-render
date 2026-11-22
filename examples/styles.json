@@ -47,7 +47,7 @@
       },
       "style": { "border": "0.5pt solid #D0D7DE", "fontSize": 10 },
       "parts": {
-        "lastRow": { "bold": true, "borderTop": "1.5pt double #333333" },
+        "lastRow": { "bold": true, "borderTop": "1.5pt double #333333", "spaceBefore": 3 },
         "lastColumn": { "align": "right" }
       }
     },

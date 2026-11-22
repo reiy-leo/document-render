@@ -103,6 +103,8 @@ document-render 的样式以 OOXML 为准：先把 Word、PowerPoint、Excel 能
 | `wrap` | 布尔：自动换行 | — | a:bodyPr wrap | wrapText | white-space | — |
 | `outlineLevel` | 1–9 | w:outlineLvl | — | — | — | — |
 
+表格自己不用 `spaceBefore`，写了会忽略；写在表格部位上是格子里段落的段前。见第九节「表格没有段前」。
+
 ### 行距
 
 `lineHeight` 有四种写法，数字和 `{ multiple }` 都叫「倍数」，但乘的东西不一样：
@@ -374,6 +376,16 @@ Image 的 `alt` 是替代文字：docx 写进 wp:docPr 的 descr（Word 里「�
 
 部位上可以写 `padding`、`paddingLeft` 这些，只改落在这个部位里的格子，没写的边还用 `cellPadding`。docx 写成这一格的 w:tcMar，HTML 是 td 的 padding，PDF 是这一格的 inset。
 
+### 表格没有段前
+
+Word 的表格没有段前，document-render 也不给表格本身段前（Rei 2026-11-21 定）：
+
+- Table 的 `style`、组件样式 `Table`（顶层 `styles` 或样式集里）、自定义组件模板里写了 `spaceBefore`，check 给警告，渲染也给同样的警告，docx、pdf、html 都当没写。组件样式 `Table` 上的只报一次。
+- 表格上面要留距离，就调前一个元素的 `spaceAfter`。
+- 表格的 `spaceAfter` 照旧，管表格下面的距离。
+- 部位上的 `spaceBefore` 留着（Rei 2026-11-22 定），意思是格子里段落的段前：格子里的文字离格子上沿多远，和表格离上一段多远无关。`table`、`cell`、`header`、`oddRow` 这些部位都一样，格子自己的 `style` 也一样。docx 写在格子段落的 w:spacing before；pdf、html 现在还不画它（html 写成 td 的 margin-top，浏览器不认）。
+- parse 不输出 Table 自己的 `spaceBefore`。表格前面那段的段后读回到那一段上，格子段落的段前读回到部位或格子的 `style` 上。
+
 ### 列宽
 
 列宽写在 Table 的 props `widths` 里，一列一个值，三种写法可以混用：
@@ -614,6 +626,8 @@ docx 现在把算好的样式直接写在段落和 run 上（直接格式）；�
 | `cell` | 每个格子 | 表格样式的 w:tcPr | — | td | table.cell |
 
 一个格子同时落在几个部位时，按 Word 的顺序叠：`table` → `cell` → 奇偶列 → 奇偶行 → 首末列 → 首末行 → 四角，后面的覆盖前面的。
+
+部位上写的 `spaceBefore` 是格子里段落的段前，不是表格的段前；表格本身没有段前，见第九节「表格没有段前」。
 
 表头默认粗体、浅灰底（#F3F3F3）。不要灰底就在表头部位写 `"background": "none"`，三种格式都不画底色；某一格自己写的 `background` 还是照画：
 

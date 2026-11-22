@@ -543,7 +543,7 @@ run 对象字段（多写会报错）：
 | 字段 | 取值 | 说明 |
 |---|---|---|
 | `align` | `left` `center` `right` `justify` `distribute` | |
-| `spaceBefore` `spaceAfter` | 长度或 `"0.5line"` | 段前段后，不继承 |
+| `spaceBefore` `spaceAfter` | 长度或 `"0.5line"` | 段前段后，不继承；Table 自己不用 `spaceBefore`（见 4.7） |
 | `lineHeight` | 见 4.3 | 行距 |
 | `marginLeft` `marginRight` | 长度 | 整段缩进，不继承 |
 | `textIndent` | 长度 | 首行缩进，常用 `"2em"` |
@@ -646,6 +646,8 @@ run 对象字段（多写会报错）：
 | `bandSize` | 整数 | 隔几行算一条带，默认 1 |
 
 Table 内置样式：`border: 0.5pt solid #999999`、`cellPadding: 4`、`spaceAfter: 8`。部位上可以写 `padding*` 只改那部分格子。
+
+表格没有段前：Table 的 `style` 或 `styles` 里的 `Table` 写 `spaceBefore`，check 警告，渲染时忽略。表格上面要留距离，调前一个元素的 `spaceAfter`。部位（`cell`、`header`、`oddRow` 等）上的 `spaceBefore` 是格子里段落的段前，只有 docx 画，pdf、html 现在不画。
 
 ### 4.8 页面（`meta.page`，也是第一节的设置）
 
@@ -992,6 +994,7 @@ prop `type`：`string`（默认）`number` `integer` `boolean` `array` `object` 
 | 隔开的第二段列表想接着编号，写了 `"listStart": 4` | 第一段增删项后对不上，Word 里也不联动 | `"continueFrom": "第一段的id"` |
 | `continueFrom` 指向后面的列表，或同时写 `listStart` | 报错 | 只指向前面的 List，去掉 `listStart` |
 | 想调列表项之间的距离，在 List 的 `style` 上写 `spaceBefore` | 只改整个列表前面的距离 | `itemSpacing` |
+| 想让表格离上一段远一点，在 Table 的 `style` 上写 `spaceBefore` | 警告，不起作用 | 给前一个元素写 `spaceAfter` |
 | 标题编号手写进文字 `"text": "1.2 术语"` | Word 里增删标题不重排，目录也不联动 | `styles` 里给 `Heading.N` 写 `listMarkerFormat`，文字只写「术语」 |
 | 标题编号写在单个标题的 `style` 上 | 报错 | 写在 `styles` 的 `Heading.N` 上；单个标题不编号写 `"numbered": false` |
 | 列表项第二段写成下一个 `items` 项，或写成列表后面的 Text | 多出一个编号，或缩进回到最左边 | 写进那一项的 `children` |

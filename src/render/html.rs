@@ -879,6 +879,8 @@ impl Html<'_> {
         ts.border_bottom = None;
         ts.border_left = None;
         ts.padding = None;
+        // 表格没有段前（建树时已经去掉，这里再保险一次），和 docx 一致
+        ts.space_before = None;
         let mut css = self.css(&ts, parent, &n.id, Ctx::Table);
         let ws = common::col_widths(p, &g, &mut self.warn, &n.id);
         let pad_pt = s

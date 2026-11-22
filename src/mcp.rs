@@ -407,7 +407,8 @@ fn check_tool(p: CheckParams) -> Result<Value> {
     let env = load_env(base_dir.as_deref(), &p.catalog, &p.style_sets, p.style_set)?;
     Ok(match document_render::prepare(&text, &env) {
         Ok((d, tree)) => {
-            let mut warnings = document_render::check_math(&tree);
+            let mut warnings = document_render::check_styles(&d);
+            warnings.extend(document_render::check_math(&tree));
             let fonts = document_render::check_fonts(&d, &tree);
             let errors = if p.allow_missing_fonts {
                 warnings.extend(fonts);
