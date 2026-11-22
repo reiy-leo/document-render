@@ -440,6 +440,18 @@ impl Html<'_> {
                 self.out.push_str("</aside>\n");
             }
             Component::Divider(_) => {
+                // Word 里 Divider 是一个空段落：占一行（默认固定 1pt）再加下边框。hr 默认高 0，补上这一行；
+                // 全局是 border-box，这里改回 content-box，边框和内边距才另外算，跟 Word 一样
+                let s = &n.style;
+                let fs = s.size_pt();
+                let line =
+                    metrics::line_box(&metrics::style_line(s, false, None), s.line_height, fs)
+                        .height(fs);
+                let h = format!("box-sizing:content-box;height:{line:.3}pt;");
+                let st = match st.split_once(" style=\"") {
+                    Some((a, b)) => format!("{a} style=\"{h}{b}"),
+                    None => format!("{st} style=\"{h}\""),
+                };
                 let _ = writeln!(self.out, "<hr id=\"{id}\"{st}>");
             }
             Component::TableOfContents(p) => self.toc(n, p, &st),

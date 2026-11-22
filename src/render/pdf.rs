@@ -155,6 +155,7 @@ fn markup_with<'a>(doc: &Doc, tree: &Node, opts: &'a Options, math_fallback: boo
         had_math: false,
         marker_font: None,
         line_marks: None,
+        para_border: false,
         heading_numbering: common::heading_numbering(tree).cloned(),
     };
     m.preamble(doc);
@@ -190,6 +191,9 @@ struct Markup<'a> {
     /// 格子里逐行的行盒：每行开头放的撑高标记（有中文的行才有）和当前排到第几行。
     /// Word 逐行按这一行的字体算行高，见 `cell_text`
     line_marks: Option<(Vec<Option<String>>, usize)>,
+    /// 正在排的是 docx 里写成段落的块（Text、Heading、Quote、Callout、Divider、Math 和合框）：
+    /// Word 把段落上下边框的粗细算进段落高度，见 `block_src`
+    para_border: bool,
 }
 
 impl Markup<'_> {
@@ -258,6 +262,21 @@ impl Markup<'_> {
     }
 
     fn node(&mut self, n: &Node, parent: &Style) {
+        let prev = self.para_border;
+        self.para_border = matches!(
+            n.component,
+            Component::Text(_)
+                | Component::Heading(_)
+                | Component::Quote(_)
+                | Component::Callout(_)
+                | Component::Divider(_)
+                | Component::Math(_)
+        );
+        self.node_inner(n, parent);
+        self.para_border = prev;
+    }
+
+    fn node_inner(&mut self, n: &Node, parent: &Style) {
         let s = &n.style;
         self.cur_id = n.id.clone();
         match &n.component {
@@ -381,8 +400,8 @@ impl Markup<'_> {
                 let body = self.inline(&p.text, s);
                 self.block(format!("#par[{body}]"), s, parent, &n.id);
             }
-            // 空盒子，线是它的下边框
-            Component::Divider(_) => self.block(String::new(), s, parent, &n.id),
+            // 空段落：和 Word 一样占一行（默认固定 1pt），线是它的下边框
+            Component::Divider(_) => self.block("#par[#sym.zws]".into(), s, parent, &n.id),
             Component::TableOfContents(p) => self.toc(n, p, parent),
             Component::Code(p) => self.code(n, p, parent),
             Component::Math(p) => {
@@ -537,7 +556,9 @@ impl Markup<'_> {
             }
         }
         let body = std::mem::replace(&mut self.out, saved);
+        let prev = std::mem::replace(&mut self.para_border, true);
         let src = self.block_src(body, &g.outer, parent, &kids[0].id);
+        self.para_border = prev;
         self.out.push_str(&src);
     }
 
@@ -672,10 +693,32 @@ impl Markup<'_> {
         if !strokes.is_empty() {
             args.push(format!("stroke: ({})", strokes.join(", ")));
         }
+        // 段落的上下边框占高度（Word 2024 实测：段落高 = 文字 + 内边距 + 线宽）。Typst 的线画在块的边上、
+        // 一半在外面，所以里面的块内边距多加半个线宽，外面再包一层块留另一半（见函数末尾）
+        let half = |e: Edge| {
+            if !self.para_border {
+                return 0.0;
+            }
+            s.border_side(e)
+                .filter(|b| !b.is_none())
+                .map_or(0.0, |b| b.width / 2.0)
+        };
+        let (half_top, half_bottom) = (half(Edge::Top), half(Edge::Bottom));
         let pads: Vec<String> = Edge::ALL
             .iter()
             .zip(["top", "right", "bottom", "left"])
-            .filter_map(|(e, k)| s.padding_side(*e).map(|p| format!("{k}: {p}pt")))
+            .filter_map(|(e, k)| {
+                let extra = match e {
+                    Edge::Top => half_top,
+                    Edge::Bottom => half_bottom,
+                    _ => 0.0,
+                };
+                match s.padding_side(*e) {
+                    Some(p) => Some(format!("{k}: {}pt", p + extra)),
+                    None if extra > 0.0 => Some(format!("{k}: {extra}pt")),
+                    None => None,
+                }
+            })
             .collect();
         if !pads.is_empty() {
             args.push(format!("inset: ({})", pads.join(", ")));
@@ -720,7 +763,28 @@ impl Markup<'_> {
         };
         let ml = s.margin_left.map(|x| x.pt(fs, 0.0)).unwrap_or(0.0);
         let mr = s.margin_right.map(|x| x.pt(fs, 0.0)).unwrap_or(0.0);
-        if ml != 0.0 || mr != 0.0 {
+        if half_top > 0.0 || half_bottom > 0.0 {
+            // 图案边框（stripe_frame、tile_grid）去掉了里面块的内边距，那一半也挪到外层
+            let lost = !args.iter().any(|a| a.starts_with("inset:"));
+            let k = if lost { 2.0 } else { 1.0 };
+            let (gap, rest): (Vec<String>, Vec<String>) = args
+                .into_iter()
+                .partition(|a| a.starts_with("above:") || a.starts_with("below:"));
+            let inner = format!("#block({})[\n{content}\n]", rest.join(", "));
+            let inner = if ml != 0.0 || mr != 0.0 {
+                format!("#pad(left: {ml}pt, right: {mr}pt)[{inner}]")
+            } else {
+                inner
+            };
+            let mut gap = gap;
+            gap.push(format!(
+                "inset: (top: {}pt, bottom: {}pt)",
+                half_top * k,
+                half_bottom * k
+            ));
+            gap.push("width: 100%".into());
+            let _ = writeln!(src, "#block({})[{inner}]", gap.join(", "));
+        } else if ml != 0.0 || mr != 0.0 {
             // 段前段后距要放在 pad 外层的块上，放在 pad 里面会被当成容器开头吞掉
             let (gap, rest): (Vec<String>, Vec<String>) = args
                 .into_iter()

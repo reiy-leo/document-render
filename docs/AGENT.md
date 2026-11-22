@@ -360,7 +360,7 @@ run 对象的字段见 3.17。
 
 - `PageBreak`：分页。
 - `ColumnBreak`：分栏的节里跳到下一栏；不分栏时 docx、pdf 当分页，html 忽略，md 丢掉。
-- `Divider`：一条横线，外观由 `borderBottom` 决定（默认 `0.5pt solid #D0D7DE`）。
+- `Divider`：一条横线，外观由 `borderBottom` 决定（默认 `0.5pt solid #D0D7DE`）。它和 Word 里一样是个空段落：占的高度 = 段前 + 一行（默认固定 1pt，`lineHeight` 能改）+ 下内边距 + 线宽 + 段后。要线上下空得少，调 `spaceBefore`、`spaceAfter`。
 
 页眉页脚里不能放 PageBreak、ColumnBreak。
 
