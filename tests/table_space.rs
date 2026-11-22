@@ -320,3 +320,22 @@ fn styles_example_total_row_spacing_shows_in_every_format() {
     // 上内边距 4 + 1.5pt 双线比边距细、不加 + 段前 3
     assert!(cell.contains("inset: (top: 7pt,"), "{cell}");
 }
+
+#[test]
+fn html_exact_row_keeps_vertical_align() {
+    // 固定行高加居中：定高 div 里用 flex 居中，文字还包在一个块里
+    let json = table_doc(r#", "parts": { "cell": { "verticalAlign": "middle" } }"#)
+        .replace(
+            r#""rows": [["#,
+            r#""rowHeights": [null, { "height": 30, "rule": "exact" }], "rows": [["#,
+        )
+        .replace(
+            r#""style": { "spaceBefore": 10, "spaceAfter": 2 }"#,
+            r#""style": {}"#,
+        );
+    let [_, _, h] = outputs(&json);
+    assert!(
+        h.contains(r#"<div style="height:22pt;display:flex;flex-direction:column;justify-content:center"><div>苹果</div></div>"#),
+        "{h}"
+    );
+}

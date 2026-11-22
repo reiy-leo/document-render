@@ -1044,12 +1044,29 @@ impl Html<'_> {
                 }
                 a.push_str(&mark);
                 let _ = write!(self.out, "<{tag}{a}>");
-                if let Some(h) = exact {
-                    let _ = write!(self.out, "<div style=\"height:{h}pt\">");
+                // 定高 div 里的竖直对齐：居中、靠下用 flex 再包一层，文字本身还是一个块
+                let justify = match part.vertical_align {
+                    Some(VerticalAlign::Middle) => Some("center"),
+                    Some(VerticalAlign::Bottom) => Some("flex-end"),
+                    _ => None,
+                };
+                match (exact, justify) {
+                    (Some(h), Some(j)) => {
+                        let _ = write!(
+                            self.out,
+                            "<div style=\"height:{h}pt;display:flex;flex-direction:column;justify-content:{j}\"><div>"
+                        );
+                    }
+                    (Some(h), None) => {
+                        let _ = write!(self.out, "<div style=\"height:{h}pt\">");
+                    }
+                    _ => {}
                 }
                 self.inline_in(sl.text(), s, &cs, &n.id);
-                if exact.is_some() {
-                    self.out.push_str("</div>");
+                match (exact, justify) {
+                    (Some(_), Some(_)) => self.out.push_str("</div></div>"),
+                    (Some(_), None) => self.out.push_str("</div>"),
+                    _ => {}
                 }
                 let _ = write!(self.out, "</{tag}>");
             }
