@@ -10,6 +10,7 @@ use typst::{
     Library, LibraryExt, World,
     diag::{FileError, FileResult},
     foundations::{Bytes, Datetime, Duration},
+    layout::{Abs, Frame, FrameItem},
     syntax::{FileId, RootedPath, Source, VirtualPath, VirtualRoot},
     text::{Font, FontBook, FontInfo, FontWeight},
     utils::LazyHash,
@@ -95,11 +96,54 @@ pub fn render(doc: &Doc, tree: &Node, opts: &Options) -> anyhow::Result<Output> 
         let msgs: Vec<String> = errs.iter().map(|e| e.message.to_string()).collect();
         anyhow::anyhow!("typst 排版失败：{}", msgs.join("；"))
     })?;
+    let document = snap_baselines(document);
     let bytes = typst_pdf::pdf(&document, &typst_pdf::PdfOptions::default()).map_err(|errs| {
         let msgs: Vec<String> = errs.iter().map(|e| e.message.to_string()).collect();
         anyhow::anyhow!("生成 PDF 失败：{}", msgs.join("；"))
     })?;
     Ok(Output { bytes, warnings })
+}
+
+/// Word 把每行的基线放在离页顶整数个 1/600 英寸的地方（见 metrics::WORD_PX）。排完版把文字挪到最近的格上，
+/// 每处最多挪 0.06pt。只挪文字：底色、线框不挪，免得相邻两块底色之间露出一条缝。
+/// 有旋转、缩放的组（比如竖排的格子）不动。
+fn snap_baselines(mut doc: PagedDocument) -> PagedDocument {
+    let info = doc.info_mut().clone();
+    let pages: typst::ecow::EcoVec<typst_layout::Page> = doc
+        .pages()
+        .iter()
+        .map(|p| {
+            let mut p = p.clone();
+            p.frame = snap_frame(&p.frame, 0.0);
+            p
+        })
+        .collect();
+    PagedDocument::new(pages, info)
+}
+
+fn snap_frame(f: &Frame, oy: f64) -> Frame {
+    let mut out = Frame::new(f.size(), f.kind());
+    if f.has_baseline() {
+        out.set_baseline(f.baseline());
+    }
+    for (pos, item) in f.items() {
+        let mut pos = *pos;
+        let item = match item {
+            FrameItem::Group(g) if g.transform.is_identity() => {
+                let mut g = g.clone();
+                g.frame = snap_frame(&g.frame, oy + pos.y.to_pt());
+                FrameItem::Group(g)
+            }
+            FrameItem::Text(_) => {
+                let y = oy + pos.y.to_pt();
+                pos.y += Abs::pt(metrics::snap_pt(y) - y);
+                item.clone()
+            }
+            _ => item.clone(),
+        };
+        out.push(pos, item);
+    }
+    out
 }
 
 /// 图片虚拟文件：路径和内容。
@@ -433,12 +477,15 @@ impl Markup<'_> {
     fn section(&mut self, n: &Node, lay: &SectionLayout, parent: &Style) {
         let page = &lay.page;
         let mut ws = Vec::new();
+        // 纸张、页边距、页眉页脚距都按 docx 里写的整 twip 算，跟 Word 一样
+        let tw = crate::units::tw_pt;
         let (w, h) = page.dims_pt(&mut ws);
+        let (w, h) = (tw(w), tw(h));
         for x in ws {
             self.warn.push(x);
         }
-        let [mt, mr, mb, ml] = page.margins_pt();
-        let gutter = page.gutter.map(|g| g.abs_pt()).unwrap_or(0.0);
+        let [mt, mr, mb, ml] = page.margins_pt().map(tw);
+        let gutter = tw(page.gutter.map(|g| g.abs_pt()).unwrap_or(0.0));
         self.margins = [mt, mr, mb, ml + gutter];
         let cols = page.columns.as_ref().map_or(1, |c| c.count());
         let gap = page
@@ -448,6 +495,7 @@ impl Markup<'_> {
             .map_or(0.0, |c| c.gap_pt());
         self.content_width = ((w - ml - mr - gutter) - gap * (cols as f32 - 1.0)) / cols as f32;
         let (hd, fd) = page.hf_distance_pt();
+        let (hd, fd) = (tw(hd), tw(fd));
         let header = self.hf_src(&lay.header, lay, parent, true, hd);
         let footer = self.hf_src(&lay.footer, lay, parent, false, fd);
         let mut o = String::new();
@@ -695,16 +743,27 @@ impl Markup<'_> {
             args.push(format!("stroke: ({})", strokes.join(", ")));
         }
         // 段落的上下边框占高度（Word 2024 实测：段落高 = 文字 + 内边距 + 线宽）。Typst 的线画在块的边上、
-        // 一半在外面，所以里面的块内边距多加半个线宽，外面再包一层块留另一半（见函数末尾）
+        // 一半在外面，所以里面的块内边距多加半条画出来的线，外面再包一层块留剩下的（见函数末尾）。
+        // Word 画的线比标称细（往下取整到像素），细出来的那点留在外侧：线贴着文字这边画
         let half = |e: Edge| {
             if !self.para_border {
-                return 0.0;
+                return (0.0, 0.0);
             }
             s.border_side(e)
                 .filter(|b| !b.is_none())
-                .map_or(0.0, |b| b.width / 2.0)
+                .map_or((0.0, 0.0), |b| {
+                    if common::border_tile(b, e).is_some() {
+                        (b.width / 2.0, b.width / 2.0)
+                    } else {
+                        // 保留四位小数，免得 Typst 源码里出现 0.26000002 这种数
+                        let r4 = |x: f32| (x * 10000.0).round() / 10000.0;
+                        let d = metrics::border_drawn(b.width) / 2.0;
+                        (r4(d), r4(b.width - d))
+                    }
+                })
         };
-        let (half_top, half_bottom) = (half(Edge::Top), half(Edge::Bottom));
+        let ((half_top, out_top), (half_bottom, out_bottom)) =
+            (half(Edge::Top), half(Edge::Bottom));
         let pads: Vec<String> = Edge::ALL
             .iter()
             .zip(["top", "right", "bottom", "left"])
@@ -728,10 +787,10 @@ impl Markup<'_> {
             args.push(format!("radius: {}pt", r.pt(fs, 0.0)));
         }
         if let Some(b) = s.space_before {
-            args.push(format!("above: {}pt", b.pt(fs, 0.0)));
+            args.push(format!("above: {}pt", crate::units::tw_pt(b.pt(fs, 0.0))));
         }
         if let Some(a) = s.space_after {
-            args.push(format!("below: {}pt", a.pt(fs, 0.0)));
+            args.push(format!("below: {}pt", crate::units::tw_pt(a.pt(fs, 0.0))));
         }
         if s.keep_together == Some(true) {
             args.push("breakable: false".into());
@@ -767,7 +826,11 @@ impl Markup<'_> {
         if half_top > 0.0 || half_bottom > 0.0 {
             // 图案边框（stripe_frame、tile_grid）去掉了里面块的内边距，那一半也挪到外层
             let lost = !args.iter().any(|a| a.starts_with("inset:"));
-            let k = if lost { 2.0 } else { 1.0 };
+            let (top, bottom) = if lost {
+                (half_top + out_top, half_bottom + out_bottom)
+            } else {
+                (out_top, out_bottom)
+            };
             let (gap, rest): (Vec<String>, Vec<String>) = args
                 .into_iter()
                 .partition(|a| a.starts_with("above:") || a.starts_with("below:"));
@@ -778,11 +841,7 @@ impl Markup<'_> {
                 inner
             };
             let mut gap = gap;
-            gap.push(format!(
-                "inset: (top: {}pt, bottom: {}pt)",
-                half_top * k,
-                half_bottom * k
-            ));
+            gap.push(format!("inset: (top: {top}pt, bottom: {bottom}pt)"));
             gap.push("width: 100%".into());
             let _ = writeln!(src, "#block({})[{inner}]", gap.join(", "));
         } else if ml != 0.0 || mr != 0.0 {
@@ -893,7 +952,8 @@ impl Markup<'_> {
             );
             return (self.inline_in(t, old, cs), set);
         }
-        let lb = |cjk| metrics::line_box(&metrics::style_line(cs, cjk, None), cs.line_height, fs);
+        let lb =
+            |cjk| metrics::line_box_px(&metrics::style_line(cs, cjk, None), cs.line_height, fs);
         let (lat, cjk) = (lb(false), lb(true));
         let base = metrics::LineBox {
             top_em: lat.top_em.min(cjk.top_em),
@@ -1512,10 +1572,11 @@ fn stroke(b: Option<&Border>, side: Edge) -> String {
                 BorderStyle::Dotted => ", dash: \"dotted\"",
                 _ => "",
             };
+            // Word 画线的粗细往下取整到 1/600 英寸（见 metrics::border_drawn），排版占的高度另按标称粗细算
             format!(
                 "(paint: {}, thickness: {}pt{dash})",
                 color(&b.color),
-                b.width
+                metrics::border_drawn(b.width)
             )
         }
     }
@@ -1682,7 +1743,7 @@ fn tiling(t: &common::Tile, vertical: bool) -> String {
 /// 和 Typst 的 stroke 一样，线的中线压在格子边上。
 /// 格子段落的段前、段后（pt）：只看部位和格子自己的 style，不从表格继承；负数当 0（docx 也写不出负的）。
 fn cell_space(part: &Style, fs: f32) -> (f32, f32) {
-    let pt = |l: Option<Len>| l.map_or(0.0, |l| l.pt(fs, 0.0).max(0.0));
+    let pt = |l: Option<Len>| l.map_or(0.0, |l| crate::units::tw_pt(l.pt(fs, 0.0).max(0.0)));
     (pt(part.space_before), pt(part.space_after))
 }
 
@@ -1958,5 +2019,5 @@ fn line_edges(
     marker: Option<(&str, f32)>,
 ) -> String {
     let m = metrics::style_line(s, cjk, marker);
-    metrics::line_box(&m, l, fs).typst()
+    metrics::line_box_px(&m, l, fs).typst()
 }

@@ -39,9 +39,9 @@ fn pdf_divider_is_an_empty_paragraph_with_its_line_counted() {
     let src = typst(&doc(&[("a", PLAIN)]));
     // 一行：空段落里的零宽字符
     assert!(src.contains("#par[#sym.zws]"), "{src}");
-    // 默认 0.5pt 线：里外各 0.25pt
+    // 默认 0.5pt 线：Word 画成 0.48pt，贴着里侧，里面留 0.24pt，外层补到 0.5pt
     assert!(
-        src.contains("#block(above: 6pt, below: 12pt, inset: (top: 0pt, bottom: 0.25pt), width: 100%)[#block(stroke: (bottom: (paint: rgb(\"#D0D7DE\"), thickness: 0.5pt)), inset: (bottom: 0.25pt), width: 100%)"),
+        src.contains("#block(above: 6pt, below: 12pt, inset: (top: 0pt, bottom: 0.26pt), width: 100%)[#block(stroke: (bottom: (paint: rgb(\"#D0D7DE\"), thickness: 0.48pt)), inset: (bottom: 0.24pt), width: 100%)"),
         "{src}"
     );
 }
@@ -59,7 +59,7 @@ fn pdf_thick_line_and_padding_add_up() {
 #[test]
 fn pdf_two_dividers_share_one_box() {
     let src = typst(&doc(&[("x", PLAIN), ("y", PLAIN)]));
-    assert_eq!(src.matches("thickness: 0.5pt").count(), 1, "{src}");
+    assert_eq!(src.matches("thickness: 0.48pt").count(), 1, "{src}");
     assert_eq!(src.matches("#par[#sym.zws]").count(), 2, "{src}");
     // 两段之间隔第一段的段后
     assert!(

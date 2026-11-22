@@ -34,6 +34,12 @@ pub fn twip(pt: f32) -> i32 {
     (pt * 20.0).round() as i32
 }
 
+/// pt 落到 docx 能写的整 twip 上再换回 pt。Word 只看得到 docx 里的整 twip，
+/// pdf 排版用同一个值才跟 Word 一样（比如 2cm 页边距写成 1134 twip = 56.7pt，不是 56.693pt）。
+pub fn tw_pt(pt: f32) -> f32 {
+    twip(pt) as f32 / 20.0
+}
+
 pub fn emu(pt: f32) -> u32 {
     (pt * 12700.0).round() as u32
 }
@@ -49,5 +55,7 @@ mod tests {
         assert_eq!(parse_len_pt("12"), Some(12.0));
         assert_eq!(parse_len_pt("3furlongs"), None);
         assert_eq!(twip(1.5), 30);
+        assert!((tw_pt(56.6929) - 56.7).abs() < 1e-5);
+        assert!((tw_pt(12.075) - 12.1).abs() < 1e-5);
     }
 }

@@ -46,13 +46,14 @@ fn pdf_code_border_width_counts_toward_height() {
 #[test]
 fn pdf_code_border_without_padding() {
     let src = typst(&doc(&[("c", THIN_NO_PAD)]));
-    // 上 0.5pt、下 1.5pt，没有内边距：里外各一半
+    // 上 0.5pt、下 1.5pt，没有内边距。Word 画成 0.48pt、1.44pt（往下取整到 1/600 英寸），线贴着文字一侧：
+    // 里面各留画出来的一半，外层补足标称粗细
     assert!(
-        src.contains("inset: (top: 0.25pt, bottom: 0.75pt), width: 100%)[#block("),
+        src.contains("inset: (top: 0.26pt, bottom: 0.78pt), width: 100%)[#block("),
         "{src}"
     );
     assert!(
-        src.contains("inset: (top: 0.25pt, right: 0pt, bottom: 0.75pt, left: 0pt)"),
+        src.contains("inset: (top: 0.24pt, right: 0pt, bottom: 0.72pt, left: 0pt)"),
         "{src}"
     );
 }
