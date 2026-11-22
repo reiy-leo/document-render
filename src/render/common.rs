@@ -430,6 +430,59 @@ impl<'a> Grid<'a> {
     }
 }
 
+/// Word 的行高（w:trHeight）不含格子的上下边距：最小行高时行高 = max(内容, H) + 上边距 + 下边距
+/// （内容含段前段后），固定行高时画出来是 H 加上 [`exact_row_extra`]。
+/// 返回第 r 行里从这一行开始的各格上、下边距里最大的（部位上写的盖过表格的 cellPadding）。
+pub fn row_pads(n: &Node, p: &TableProps, g: &Grid, r: usize, pad: f32) -> (f32, f32) {
+    (0..g.cols)
+        .filter(|&c| g.is_origin(r, c))
+        .map(|c| {
+            let part = cell_parts(n, &p.look, g, r, c);
+            (
+                part.padding_side(Edge::Top).unwrap_or(pad),
+                part.padding_side(Edge::Bottom).unwrap_or(pad),
+            )
+        })
+        .fold((0.0f32, 0.0f32), |(t, b), (pt, pb)| (t.max(pt), b.max(pb)))
+}
+
+/// 各条横线的粗细：第 r 项是第 r 行上面那条（取这一行各格上边和上一行各格下边里最粗的），
+/// 最后一项是表格最下面那条。Word 把横线的粗细算进行高，pdf、html 照着加。
+pub fn h_lines(n: &Node, p: &TableProps, g: &Grid) -> Vec<f32> {
+    let width = |b: &Option<Border>| b.as_ref().filter(|b| !b.is_none()).map_or(0.0, |b| b.width);
+    let mut above = vec![0.0f32; g.rows + 1];
+    for r in 0..g.rows {
+        for c in 0..g.cols {
+            if !g.is_origin(r, c) {
+                continue;
+            }
+            let sl = g.slot(r, c);
+            let e = span_edges(n, &p.look, g, r, c);
+            above[r] = above[r].max(width(&e[0]));
+            let r1 = r + sl.row_span;
+            above[r1] = above[r1].max(width(&e[2]));
+        }
+    }
+    above
+}
+
+/// Word 的最小行高里横线占的高度：第一行加上框线，往下各行的上框线先占上边距 `top`，
+/// 比上边距粗的部分才加（2026-11-22 Windows Word 2024 实测）。最下面的框线另算。
+pub fn line_over_row(above: &[f32], r: usize, top: f32) -> f32 {
+    if r == 0 {
+        above[0]
+    } else {
+        (above[r] - top).max(0.0)
+    }
+}
+
+/// 固定行高时 Word 比写的 H 多画的高度：多一个下边距，上边距和横线都不加
+/// （2026-11-22 Windows Word 2024 实测：H = 30pt，上下边距 4/4 画 34pt，1/9 画 39pt，9/1 画 31pt，
+/// 0/0 画 30pt；3pt 的框线也还是 34pt）。
+pub fn exact_row_extra(_top: f32, bottom: f32) -> f32 {
+    bottom
+}
+
 /// 合并后的一格四条边：上、左取左上角，下取最后一行，右取最后一列。返回 上右下左。
 pub fn span_edges(n: &Node, look: &TableLook, g: &Grid, r: usize, c: usize) -> [Option<Border>; 4] {
     let sl = g.slot(r, c);

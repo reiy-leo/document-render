@@ -958,6 +958,7 @@ impl Html<'_> {
             .unwrap_or(4.0);
         let head_sep = g.has_header && s.repeat_header.unwrap_or(true);
         g.warn_ragged(&mut self.warn, &n.id);
+        let above = common::h_lines(n, p, &g);
         if !head_sep {
             self.out.push_str("<tbody>\n");
         }
@@ -970,8 +971,12 @@ impl Html<'_> {
             if s.row_break == Some(false) {
                 tr.push_str("break-inside:avoid;");
             }
-            if let Some(h) = g.row_height(p, r) {
-                let _ = write!(tr, "height:{}pt;", h.height);
+            // Word 的最小行高 H 不含格子的上下边距和横线（见 common::row_pads），tr 的 height 含，
+            // 所以加上；固定行高靠格子里定高的 div（见下面），tr 不写
+            let (pt, pb) = common::row_pads(n, p, &g, r, pad);
+            if let Some(h) = g.row_height(p, r).filter(|h| !h.exact) {
+                let v = h.height + pt + pb + common::line_over_row(&above, r, pt);
+                let _ = write!(tr, "height:{v}pt;");
             }
             if tr.is_empty() {
                 self.out.push_str("<tr>");
@@ -1012,7 +1017,15 @@ impl Html<'_> {
                 let exact = g
                     .row_height(p, r)
                     .filter(|h| h.exact && sl.row_span == 1)
-                    .map(|h| (h.height - vpad).max(0.0));
+                    .map(|h| {
+                        // 浏览器的行高里还有这一格上下框线各一半，Word 的固定行高不含，扣掉
+                        let e = common::span_edges(n, &p.look, &g, r, c);
+                        let w = |b: &Option<Border>| {
+                            b.as_ref().filter(|b| !b.is_none()).map_or(0.0, |b| b.width)
+                        };
+                        let lines = (w(&e[0]) + w(&e[2])) / 2.0;
+                        (h.height + common::exact_row_extra(pt, pb) - vpad - lines).max(0.0)
+                    });
                 // 行高按整格的样式（字体是继承来的）算，逐行看这一行有没有中文（见 pdf 的 cell_text）：
                 // 两种行都有时，整格写两种行高里小的那个，每行开头放一个带这一行行高的零宽字符
                 let lines = common::line_cjk(sl.text(), s, &cs);

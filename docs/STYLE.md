@@ -423,9 +423,16 @@ Word 的表格没有段前，document-render 也不给表格本身段前（Rei 2
 
 行高写在 props `rowHeights`，一行一个值：
 
-- 长度（`"28.35pt"`、数字当 pt）：最小高度，内容多了会撑高。docx 写 `w:hRule="atLeast"`，HTML 是 tr 的 height，PDF 只对单行文字的格子有效。
-- `{ "height": "51.05pt", "rule": "exact" }`：固定高度，内容多了会被裁掉。docx 写 `w:hRule="exact"`，PDF 是 Typst 的 rows。
+- 长度（`"28.35pt"`、数字当 pt）：最小高度，内容多了会撑高。docx 写 `w:hRule="atLeast"`，HTML 是 tr 的 height，PDF 把格子内容撑到那么高（只看单行文字的格子）。
+- `{ "height": "51.05pt", "rule": "exact" }`：固定高度，内容多了会被裁掉。docx 写 `w:hRule="exact"`，PDF 是 Typst 的 rows，HTML 在格子里包一个定高的 div。
 - `null`：这一行不管。
+
+docx 照写 H。Word 画出来的行高不等于 H（Windows Word 2024 实测，2026-11-22），pdf、html 照下面算：
+
+- 最小行高：H 不含格子的上下边距和横线，含段前段后。行高 = `max(段前 + 文字 + 段后, H) + 上下边距 + 横线`。横线怎么算和不写行高时一样：第一行加上框线；行和行之间的线先占下一行的上边距，比上边距粗的部分才加；最后一行加下框线。
+- 固定行高：行高 = H + 下边距。上边距不加，横线也不加；只有最后一行再加下框线。比如 H = 30pt，上下边距 4/4 画 34pt，1/9 画 39pt，9/1 画 31pt。
+- html 的 tr 高度含两条框线各一半，固定行高的 div 要扣掉这一半。
+- 和 Word 比过：pdf 差在 0.14pt 内，html 差在 0.25pt 内。框线有 3pt 粗时，html 格子里文字的位置和 Word 差约 3pt，这是早就有的毛病，还没修。
 
 ### 行内图片
 

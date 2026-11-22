@@ -267,7 +267,7 @@ fn html_puts_cell_spacing_into_padding() {
 
 #[test]
 fn html_exact_row_keeps_its_height() {
-    // 固定 30pt 的行：上下内边距 4 + 段前段后 5 → 里面 12pt 高
+    // 固定 30pt 的行：Word 画 30 + 下边距 4；扣掉上下内边距 4 + 段前段后 5、上下框线各一半（0.5pt 线）→ 里面 15.5pt 高
     let json = table_doc(r#", "parts": { "cell": { "spaceBefore": 5, "spaceAfter": 5 } }"#)
         .replace(
             r#""rows": [["#,
@@ -278,8 +278,15 @@ fn html_exact_row_keeps_its_height() {
             r#""style": {}"#,
         );
     let [_, _, h] = outputs(&json);
-    assert!(h.contains(r#"<div style="height:12pt">苹果</div>"#), "{h}");
-    assert_eq!(h.matches(r#"<div style="height:12pt">"#).count(), 2, "{h}");
+    assert!(
+        h.contains(r#"<div style="height:15.5pt">苹果</div>"#),
+        "{h}"
+    );
+    assert_eq!(
+        h.matches(r#"<div style="height:15.5pt">"#).count(),
+        2,
+        "{h}"
+    );
 }
 
 #[test]
@@ -335,7 +342,7 @@ fn html_exact_row_keeps_vertical_align() {
         );
     let [_, _, h] = outputs(&json);
     assert!(
-        h.contains(r#"<div style="height:22pt;display:flex;flex-direction:column;justify-content:center"><div>苹果</div></div>"#),
+        h.contains(r#"<div style="height:25.5pt;display:flex;flex-direction:column;justify-content:center"><div>苹果</div></div>"#),
         "{h}"
     );
 }

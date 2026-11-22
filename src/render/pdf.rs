@@ -1150,25 +1150,17 @@ impl Markup<'_> {
         let mut exact_rows = Vec::new();
         // Word 把横线的粗细算进行高：每行加它上面那条线（行间的线要扣掉下一行的上边距，见下面），
         // 最后一行再加下面那条。Typst 的线压在格子边上、不占高度，所以加进格子的上下内边距
-        let width =
-            |b: &Option<Border>| b.as_ref().filter(|b| !b.is_none()).map_or(0.0, |b| b.width);
-        let mut above = vec![0.0f32; g.rows + 1];
-        for r in 0..g.rows {
-            for c in 0..g.cols {
-                if !g.is_origin(r, c) {
-                    continue;
-                }
-                let sl = g.slot(r, c);
-                let e = common::span_edges(n, &p.look, &g, r, c);
-                above[r] = above[r].max(width(&e[0]));
-                let r1 = r + sl.row_span;
-                above[r1] = above[r1].max(width(&e[2]));
-            }
-        }
+        let above = common::h_lines(n, p, &g);
         for r in 0..g.rows {
             let rh = g.row_height(p, r);
+            // 固定行高：Word 画出来比 H 多一截（见 common::exact_row_extra），边距不在 H 里
             exact_rows.push(match rh {
-                Some(h) if h.exact => format!("{}pt", h.height),
+                Some(h) if h.exact => {
+                    let (t, b) = common::row_pads(n, p, &g, r, pad);
+                    // 最后一行再加下框线的粗细（Word 实测：0.5pt、3pt 的框线都整条加在下面）
+                    let bottom = if r + 1 == g.rows { above[g.rows] } else { 0.0 };
+                    format!("{}pt", h.height + common::exact_row_extra(t, b) + bottom)
+                }
                 _ => "auto".to_string(),
             });
             for c in 0..g.cols {
@@ -1217,8 +1209,7 @@ impl Markup<'_> {
                 // 只有线比上边距粗的部分才加进行高（第一行的上框线、最后一行的下框线照加）
                 let top_pad = part.padding_side(Edge::Top).unwrap_or(pad);
                 let line = |e: &Edge| match e {
-                    Edge::Top if r == 0 => above[0],
-                    Edge::Top => (above[r] - top_pad).max(0.0),
+                    Edge::Top => common::line_over_row(&above, r, top_pad),
                     Edge::Bottom if last => above[g.rows],
                     _ => 0.0,
                 };
@@ -1254,13 +1245,10 @@ impl Markup<'_> {
                         }
                     ));
                 }
-                let ins: Vec<f32> = Edge::ALL
-                    .iter()
-                    .map(|e| part.padding_side(*e).unwrap_or(pad) + line(e) + space(e))
-                    .collect();
-                // 最小行高：Typst 的行只有固定高度，最小高度靠把内容撑到那么高（只看单行的格子）
+                // 最小行高：Typst 的行只有固定高度，最小高度靠把内容撑到那么高（只看单行的格子）。
+                // Word 的 H 不含上下边距和线，含段前段后：行高 = max(段前 + 文字 + 段后, H) + 边距 + 线
                 if let Some(h) = rh.filter(|h| !h.exact && sl.row_span == 1) {
-                    let min = (h.height - ins[0] - ins[2]).max(0.0);
+                    let min = (h.height - sb - sa).max(0.0);
                     let va = match part.vertical_align {
                         Some(VerticalAlign::Middle) => "horizon",
                         Some(VerticalAlign::Bottom) => "bottom",

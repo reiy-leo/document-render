@@ -304,6 +304,8 @@ run 对象的字段见 3.17。
 | `look` | 对象 | 否 | 见下 | 哪些部位生效 |
 | `rowHeights` | 数组 | 否 | 无 | 每行一个（有表头时表头是第一项）：长度=最小高；`{ "height": "20pt", "rule": "exact" }`=固定高（`rule` 只能 `atLeast`/`exact`）；`null`=不管 |
 
+行高按 Word 算：最小高 H 不含格子上下边距和横线，画出来是 `max(段前 + 文字 + 段后, H) + 上下边距 + 横线`；固定高画出来是 H + 下边距（最后一行再加下框线）。要整行正好 20pt 高，固定高写 20pt 减下边距。
+
 `look` 字段和默认值：`firstRow: true`、`lastRow: false`、`firstColumn: true`、`lastColumn: false`、`bandedRows: true`、`bandedColumns: false`。部位样式只在对应开关打开时生效：用 `lastRow`、`lastColumn` 部位要写 `look.lastRow`/`look.lastColumn: true`，用 `oddColumn`/`evenColumn` 要开 `bandedColumns`。
 
 格子写法：字符串、run 数组，或对象：
